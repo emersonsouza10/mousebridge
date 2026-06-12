@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mousebridge.config import ConfigError, load_config
-from mousebridge.config.settings import build_config
+from zephyrlink.config import ConfigError, load_config
+from zephyrlink.config.settings import build_config
 
 
 class DefaultsTest(unittest.TestCase):

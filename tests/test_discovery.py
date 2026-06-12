@@ -1,6 +1,6 @@
 import unittest
 
-from mousebridge.discovery.beacon import build_query, build_reply, parse_packet
+from zephyrlink.discovery.beacon import build_query, build_reply, parse_packet
 
 
 class PacketTest(unittest.TestCase):

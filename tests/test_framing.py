@@ -1,6 +1,6 @@
 import unittest
 
-from mousebridge.transport.framing import HEADER, FrameDecoder, FrameError, encode_frame
+from zephyrlink.transport.framing import HEADER, FrameDecoder, FrameError, encode_frame
 
 
 class EncodeFrameTest(unittest.TestCase):

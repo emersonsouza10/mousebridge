@@ -1,8 +1,8 @@
-# Configuração do MouseBridge.
+# Configuração do ZephyrLink.
 # Todos os campos são opcionais; os valores abaixo são os padrões.
 
 role: server            # server (tem o mouse/teclado) | client (controlado)
-name: mousebridge       # nome anunciado na descoberta UDP
+name: zephyrlink       # nome anunciado na descoberta UDP
 log_level: INFO         # DEBUG | INFO | WARNING | ERROR
 log_json: false         # true => logs em JSON estruturado
 

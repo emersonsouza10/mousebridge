@@ -3,8 +3,8 @@
 import asyncio
 import unittest
 
-from mousebridge.transport import Message, MessageStream, MsgType
-from mousebridge.transport.security import make_challenge, sign_challenge, verify_challenge
+from zephyrlink.transport import Message, MessageStream, MsgType
+from zephyrlink.transport.security import make_challenge, sign_challenge, verify_challenge
 
 KEY = "chave-de-teste"
 

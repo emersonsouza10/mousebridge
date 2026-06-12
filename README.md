@@ -1,4 +1,4 @@
-# MouseBridge
+# ZephyrLink
 
 Ferramenta open source em Python para compartilhar **um único mouse e teclado entre dois
 computadores** na mesma rede local, no estilo InputLeap/Barrier.
@@ -41,8 +41,8 @@ retorna.
 ## Instalação
 
 ```bash
-git clone https://github.com/seu-usuario/mousebridge.git
-cd mousebridge
+git clone https://github.com/seu-usuario/zephyrlink.git
+cd zephyrlink
 python -m venv .venv
 .venv\Scripts\activate        # Windows  (Linux/macOS: source .venv/bin/activate)
 pip install -e .
@@ -53,7 +53,7 @@ pip install -e .
 **1. Na máquina principal** (a que tem o mouse/teclado físicos):
 
 ```bash
-mousebridge server --key minha-chave-secreta --edge right
+zephyrlink server --key minha-chave-secreta --edge right
 ```
 
 `--edge right` indica que a tela do secundário está à direita da principal.
@@ -61,14 +61,14 @@ mousebridge server --key minha-chave-secreta --edge right
 **2. Na máquina secundária:**
 
 ```bash
-mousebridge client --key minha-chave-secreta
+zephyrlink client --key minha-chave-secreta
 ```
 
 O cliente encontra o servidor automaticamente via broadcast UDP. Se a descoberta falhar
 (ex.: firewall bloqueando broadcast), informe o IP manualmente:
 
 ```bash
-mousebridge client --key minha-chave-secreta --host 192.168.1.50
+zephyrlink client --key minha-chave-secreta --host 192.168.1.50
 ```
 
 **3. Pronto.** Empurre o cursor contra a borda configurada e ele aparece na outra
@@ -77,7 +77,7 @@ máquina; empurre de volta e ele retorna.
 ### Interface gráfica
 
 ```bash
-mousebridge gui
+zephyrlink gui
 ```
 
 Escolha o papel (servidor/cliente), a borda e opcionalmente o IP manual, e clique em
@@ -90,7 +90,7 @@ Tudo pode ser definido em YAML (veja [`config.yaml`](config.yaml) com todos os c
 comentados):
 
 ```bash
-mousebridge server -c config.yaml
+zephyrlink server -c config.yaml
 ```
 
 Exemplo mínimo:
@@ -111,8 +111,8 @@ Flags de linha de comando (`--key`, `--port`, `--edge`, `--host`) sobrepõem o Y
 Libere as portas no servidor (PowerShell como administrador):
 
 ```powershell
-New-NetFirewallRule -DisplayName "MouseBridge TCP" -Direction Inbound -Protocol TCP -LocalPort 50510 -Action Allow
-New-NetFirewallRule -DisplayName "MouseBridge UDP" -Direction Inbound -Protocol UDP -LocalPort 50511 -Action Allow
+New-NetFirewallRule -DisplayName "ZephyrLink TCP" -Direction Inbound -Protocol TCP -LocalPort 50510 -Action Allow
+New-NetFirewallRule -DisplayName "ZephyrLink UDP" -Direction Inbound -Protocol UDP -LocalPort 50511 -Action Allow
 ```
 
 ### TLS (opcional)
@@ -120,7 +120,7 @@ New-NetFirewallRule -DisplayName "MouseBridge UDP" -Direction Inbound -Protocol 
 Gere um certificado autoassinado e aponte o servidor para ele:
 
 ```bash
-openssl req -x509 -newkey rsa:2048 -nodes -keyout mb.key -out mb.crt -days 3650 -subj "/CN=mousebridge"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout mb.key -out mb.crt -days 3650 -subj "/CN=zephyrlink"
 ```
 
 ```yaml
@@ -136,7 +136,7 @@ sem CA, o canal é cifrado e a autenticidade fica garantida pelo desafio HMAC).
 ## Arquitetura
 
 ```
-mousebridge/
+zephyrlink/
 ├── server/      # Orquestra a máquina principal: captura, troca de controle, heartbeat
 ├── client/      # Máquina secundária: conexão/reconexão, injeção de eventos, retorno
 ├── transport/   # Framing TCP, mensagens JSON, stream tipado, autenticação/TLS
@@ -214,7 +214,7 @@ não exigem display nem as bibliotecas de input instaladas.
 
 - Clipboard sincroniza apenas **texto** (limitação do pyperclip).
 - No Windows, aplicações elevadas (executando como administrador) não recebem eventos
-  injetados a menos que o MouseBridge também rode elevado.
+  injetados a menos que o ZephyrLink também rode elevado.
 - `Ctrl+Alt+Del` e a tela de bloqueio não são capturáveis (restrição do sistema).
 - Dois computadores por enquanto (1 servidor ↔ 1 cliente).
 

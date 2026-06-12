@@ -1,6 +1,6 @@
 import unittest
 
-from mousebridge.transport.security import (
+from zephyrlink.transport.security import (
     host_allowed,
     make_challenge,
     sign_challenge,

@@ -1,6 +1,6 @@
 import unittest
 
-from mousebridge.keyboard.keymap import payload_from_parts, payload_is_valid
+from zephyrlink.keyboard.keymap import payload_from_parts, payload_is_valid
 
 
 class PayloadFromPartsTest(unittest.TestCase):

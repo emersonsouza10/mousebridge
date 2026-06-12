@@ -1,7 +1,7 @@
 import unittest
 
-from mousebridge.mouse.edge import EdgeDetector, entry_position, opposite_edge
-from mousebridge.mouse.screen import ScreenInfo
+from zephyrlink.mouse.edge import EdgeDetector, entry_position, opposite_edge
+from zephyrlink.mouse.screen import ScreenInfo
 
 FHD = ScreenInfo(0, 0, 1920, 1080)
 UHD = ScreenInfo(0, 0, 3840, 2160)

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mousebridge"
+name = "zephyrlink"
 version = "0.1.0"
 description = "Compartilhamento de mouse e teclado entre dois computadores na mesma rede local"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mousebridge = "mousebridge.__main__:main"
+zephyrlink = "zephyrlink.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["mousebridge*"]
+include = ["zephyrlink*"]

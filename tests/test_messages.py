@@ -1,6 +1,6 @@
 import unittest
 
-from mousebridge.transport.messages import Message, MsgType, ProtocolError
+from zephyrlink.transport.messages import Message, MsgType, ProtocolError
 
 
 class MessageTest(unittest.TestCase):
