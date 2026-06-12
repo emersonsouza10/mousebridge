@@ -109,9 +109,15 @@ class ZephyrLinkClient:
             await self._wait_retry()
             return
         assert self._screen is not None
-        await stream.send(Message(MsgType.SCREEN_INFO, {"screen": self._screen.to_dict()}))
+        # Declara qual borda do servidor esta máquina ocupa (topologia estrela).
+        await stream.send(
+            Message(
+                MsgType.SCREEN_INFO,
+                {"screen": self._screen.to_dict(), "edge": self._config.layout.edge},
+            )
+        )
 
-        logger.info("Conectado e autenticado a %s:%d", host, port)
+        logger.info("Conectado a %s:%d na borda '%s' do servidor", host, port, self._config.layout.edge)
         self._stream = stream
         self._emit_status()
         self._clipboard.start(self._send_clipboard)
@@ -151,6 +157,9 @@ class ZephyrLinkClient:
                     await self._clipboard.apply_remote(str(message.data.get("text", "")))
                 case MsgType.PING:
                     await stream.send(Message(MsgType.PONG, {}))
+                case MsgType.AUTH_FAIL:
+                    reason = str(message.data.get("reason", "desconhecido"))
+                    raise ConnectionError(f"servidor recusou a conexão: {reason}")
                 case _:
                     logger.debug("Mensagem ignorada: %s", message.type)
 

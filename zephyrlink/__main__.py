@@ -27,12 +27,13 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--port", type=int, default=None, help="porta TCP (sobrepõe o YAML)")
     common.add_argument("-v", "--verbose", action="store_true", help="log em nível DEBUG")
 
-    server = sub.add_parser("server", parents=[common], help="máquina principal (tem mouse/teclado)")
-    server.add_argument("--edge", choices=VALID_EDGES, default=None,
-                        help="borda onde está a tela secundária")
+    sub.add_parser("server", parents=[common], help="máquina principal (tem mouse/teclado)")
 
     client = sub.add_parser("client", parents=[common], help="máquina secundária (controlada)")
     client.add_argument("--host", default=None, help="IP do servidor (pula a descoberta UDP)")
+    client.add_argument("--edge", choices=VALID_EDGES, default=None,
+                        help="borda do servidor onde esta máquina fica "
+                             "(right=à direita, left=à esquerda, top=acima, bottom=abaixo)")
 
     sub.add_parser("gui", parents=[common], help="interface gráfica")
     return parser
@@ -56,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         config = replace(config, network=replace(config.network, tcp_port=args.port))
     if args.verbose:
         config = replace(config, log_level="DEBUG")
-    if args.command == "server" and getattr(args, "edge", None):
+    if args.command == "client" and getattr(args, "edge", None):
         config = replace(config, layout=replace(config.layout, edge=args.edge))
     if args.command == "client" and getattr(args, "host", None):
         config = replace(config, network=replace(config.network, manual_host=args.host))

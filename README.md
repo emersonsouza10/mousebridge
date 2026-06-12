@@ -53,26 +53,47 @@ pip install -e .
 **1. Na máquina principal** (a que tem o mouse/teclado físicos):
 
 ```bash
-zephyrlink server --key minha-chave-secreta --edge right
+zephyrlink server --key minha-chave-secreta
 ```
 
-`--edge right` indica que a tela do secundário está à direita da principal.
+O servidor não declara bordas — ele aprende a posição de cada cliente quando eles
+conectam.
 
-**2. Na máquina secundária:**
+**2. Em cada máquina secundária**, informe qual borda do servidor ela ocupa com `--edge`:
 
 ```bash
-zephyrlink client --key minha-chave-secreta
+zephyrlink client --key minha-chave-secreta --edge right
 ```
 
 O cliente encontra o servidor automaticamente via broadcast UDP. Se a descoberta falhar
 (ex.: firewall bloqueando broadcast), informe o IP manualmente:
 
 ```bash
-zephyrlink client --key minha-chave-secreta --host 192.168.1.50
+zephyrlink client --key minha-chave-secreta --edge right --host 192.168.1.50
 ```
 
-**3. Pronto.** Empurre o cursor contra a borda configurada e ele aparece na outra
+**3. Pronto.** Empurre o cursor contra a borda correspondente e ele aparece na outra
 máquina; empurre de volta e ele retorna.
+
+### Vários clientes (topologia estrela)
+
+O servidor aceita **um cliente por borda**, permitindo até quatro máquinas secundárias ao
+redor da principal. Cada cliente declara sua borda; ao cruzar aquela borda, o controle vai
+para o cliente correspondente. Exemplo com a principal à esquerda, um cliente à direita e
+outro abaixo:
+
+```bash
+# máquina principal
+zephyrlink server --key K
+
+# cliente à direita
+zephyrlink client --key K --edge right --host 192.168.10.114
+
+# cliente abaixo
+zephyrlink client --key K --edge bottom --host 192.168.10.114
+```
+
+A área de transferência é sincronizada entre **todas** as máquinas conectadas.
 
 ### Interface gráfica
 
@@ -190,7 +211,7 @@ thread-safe drenadas via `after()`; o núcleo nunca chama widgets diretamente.
 | Mensagem | Direção | Conteúdo |
 |---|---|---|
 | `AUTH_CHALLENGE` / `AUTH_RESPONSE` / `AUTH_OK` | handshake | nonce / HMAC / tela do servidor |
-| `SCREEN_INFO` | cliente → servidor | geometria da tela do cliente |
+| `SCREEN_INFO` | cliente → servidor | geometria da tela + borda do servidor que o cliente ocupa |
 | `ENTER` | servidor → cliente | borda + razão: controle vai para o cliente |
 | `MOUSE_MOVE` / `MOUSE_BUTTON` / `MOUSE_SCROLL` | servidor → cliente | deltas / botões / scroll |
 | `KEY_EVENT` | servidor → cliente | tecla serializada + pressionada/solta |
@@ -216,7 +237,8 @@ não exigem display nem as bibliotecas de input instaladas.
 - No Windows, aplicações elevadas (executando como administrador) não recebem eventos
   injetados a menos que o ZephyrLink também rode elevado.
 - `Ctrl+Alt+Del` e a tela de bloqueio não são capturáveis (restrição do sistema).
-- Dois computadores por enquanto (1 servidor ↔ 1 cliente).
+- Topologia em estrela: a máquina principal no centro e um cliente por borda (até quatro
+  secundárias). Não há modo cadeia (atravessar um cliente para chegar a outro).
 
 ## Fases de desenvolvimento
 

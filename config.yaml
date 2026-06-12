@@ -24,8 +24,11 @@ security:
   allowed_hosts: []     # vazio = todos; ex.: ["192.168.1.42", "192.168.1.*"]
 
 layout:
-  edge: right           # borda da tela principal onde está a secundária:
-                        # left | right | top | bottom
+  # 'edge' só é usado pelo CLIENTE: indica qual borda do servidor esta
+  # máquina ocupa (right=à direita do servidor, left=à esquerda, top=acima,
+  # bottom=abaixo). O servidor aprende as bordas conforme os clientes
+  # conectam, aceitando um cliente por borda (topologia estrela).
+  edge: right           # left | right | top | bottom
   switch_margin: 1      # pixels de tolerância para considerar a borda atingida
   return_inset: 3       # afastamento da borda ao devolver o cursor
 

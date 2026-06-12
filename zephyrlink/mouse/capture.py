@@ -29,7 +29,7 @@ from zephyrlink.mouse.screen import ScreenInfo, primary_center
 
 logger = logging.getLogger(__name__)
 
-OnEdgeHit = Callable[[float], None]          # ratio ao longo da borda
+OnEdgeHit = Callable[[str, float], None]     # borda atingida, ratio ao longo dela
 OnMove = Callable[[int, int], None]          # dx, dy
 OnButton = Callable[[str, bool], None]       # botão, pressionado
 OnScroll = Callable[[int, int], None]        # dx, dy
@@ -43,9 +43,8 @@ NAME_TO_BUTTON: dict[str, Any] = {name: btn for btn, name in BUTTON_NAMES.items(
 
 
 class MouseCapture:
-    def __init__(self, screen: ScreenInfo, edge_detector: EdgeDetector) -> None:
+    def __init__(self, screen: ScreenInfo) -> None:
         self._screen = screen
-        self._detector = edge_detector
         self._controller = mouse.Controller()
         self._listener: mouse.Listener | None = None
         self._lock = threading.Lock()
@@ -61,19 +60,27 @@ class MouseCapture:
     def set_position(self, x: int, y: int) -> None:
         self._controller.position = (x, y)
 
-    def start_monitor(self, on_edge_hit: OnEdgeHit) -> None:
-        """Observa a posição do cursor aguardando o cruzamento da borda."""
+    def start_monitor(self, detectors: list[EdgeDetector], on_edge_hit: OnEdgeHit) -> None:
+        """Observa o cursor aguardando o cruzamento de qualquer borda vigiada.
+
+        ``detectors`` pode conter uma borda por cliente conectado (topologia
+        estrela); a primeira borda atingida dispara ``on_edge_hit`` com o
+        nome da borda e o ratio da posição ao longo dela.
+        """
         with self._lock:
             self._stop_listener()
+            watched = list(detectors)
 
             def on_move(x: int, y: int) -> None:
-                if self._detector.hit(int(x), int(y)):
-                    on_edge_hit(self._detector.exit_ratio(int(x), int(y)))
+                for detector in watched:
+                    if detector.hit(int(x), int(y)):
+                        on_edge_hit(detector.edge, detector.exit_ratio(int(x), int(y)))
+                        return
 
             self._listener = mouse.Listener(on_move=on_move)
             self._listener.start()
             self._mode = "monitor"
-            logger.debug("Captura de mouse: modo monitor")
+            logger.debug("Captura de mouse: modo monitor (%d bordas)", len(watched))
 
     def start_forward(
         self,

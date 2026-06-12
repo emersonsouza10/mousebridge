@@ -101,6 +101,40 @@ class ScreenInfoTest(unittest.TestCase):
         self.assertEqual(ScreenInfo.from_dict(screen.to_dict()), screen)
 
 
+class MultiEdgeSelectionTest(unittest.TestCase):
+    """Topologia estrela: várias bordas vigiadas simultaneamente.
+
+    Reproduz a varredura que o monitor de mouse faz — primeira borda
+    atingida vence — sem depender do pynput.
+    """
+
+    def setUp(self) -> None:
+        # Servidor com cliente à direita e cliente abaixo.
+        self.detectors = [
+            EdgeDetector("right", FHD),
+            EdgeDetector("bottom", FHD),
+        ]
+
+    def _first_hit(self, x: int, y: int) -> str | None:
+        for d in self.detectors:
+            if d.hit(x, y):
+                return d.edge
+        return None
+
+    def test_right_border_selects_right_client(self) -> None:
+        self.assertEqual(self._first_hit(1919, 400), "right")
+
+    def test_bottom_border_selects_bottom_client(self) -> None:
+        self.assertEqual(self._first_hit(900, 1079), "bottom")
+
+    def test_interior_selects_nothing(self) -> None:
+        self.assertIsNone(self._first_hit(960, 540))
+
+    def test_untracked_border_selects_nothing(self) -> None:
+        # Borda esquerda não tem cliente registrado.
+        self.assertIsNone(self._first_hit(0, 400))
+
+
 class PlatformHelpersTest(unittest.TestCase):
     def test_dpi_awareness_is_noop_off_windows(self) -> None:
         # Não deve lançar em nenhuma plataforma.
