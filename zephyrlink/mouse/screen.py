@@ -53,6 +53,29 @@ class ScreenInfo:
         )
 
 
+def enable_dpi_awareness() -> None:
+    """Declara o processo *per-monitor DPI aware* (Windows).
+
+    Sem isso, em telas com escala != 100% o Windows entrega ao processo
+    coordenadas e dimensões "virtualizadas" (escaladas), divergindo das
+    coordenadas físicas que ``SetCursorPos`` usa — o cursor injetado vai
+    parar no lugar errado. Deve ser chamado uma vez, no início do processo,
+    antes de qualquer consulta de tela. Em outros sistemas é no-op.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        # PROCESS_PER_MONITOR_DPI_AWARE = 2 (Windows 8.1+)
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()  # fallback (Vista+)
+        except (AttributeError, OSError):
+            logger.warning("Não foi possível ativar DPI awareness")
+
+
 def _windows_virtual_screen() -> ScreenInfo:
     import ctypes
 
@@ -65,6 +88,26 @@ def _windows_virtual_screen() -> ScreenInfo:
         width=metrics(SM_CXVIRTUALSCREEN),
         height=metrics(SM_CYVIRTUALSCREEN),
     )
+
+
+def primary_center() -> tuple[int, int] | None:
+    """Centro do monitor primário (sempre dentro de um monitor físico).
+
+    O monitor primário tem origem (0,0) no Windows; seu centro nunca cai
+    nas "áreas mortas" que surgem entre monitores de tamanhos diferentes
+    na tela virtual. É o ponto ideal para a recentralização do cursor.
+    Retorna ``None`` fora do Windows (o chamador usa o centro da tela).
+    """
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    try:
+        SM_CXSCREEN, SM_CYSCREEN = 0, 1
+        metrics = ctypes.windll.user32.GetSystemMetrics
+        return (metrics(SM_CXSCREEN) // 2, metrics(SM_CYSCREEN) // 2)
+    except (AttributeError, OSError):
+        return None
 
 
 def _tkinter_screen() -> ScreenInfo:

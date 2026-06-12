@@ -25,7 +25,7 @@ from typing import Any
 from pynput import mouse
 
 from zephyrlink.mouse.edge import EdgeDetector
-from zephyrlink.mouse.screen import ScreenInfo
+from zephyrlink.mouse.screen import ScreenInfo, primary_center
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +84,22 @@ class MouseCapture:
         """Suprime input local e encaminha eventos como deltas."""
         with self._lock:
             self._stop_listener()
-            center_x, center_y = self._screen.center
-            self._controller.position = (center_x, center_y)
+            # Recentraliza no monitor primário, não no centro da tela virtual:
+            # com monitores de tamanhos diferentes, o centro virtual pode cair
+            # numa "área morta" fora de qualquer monitor físico.
+            target = primary_center() or self._screen.center
+            self._controller.position = target
+            # Lê onde o cursor REALMENTE parou (o Windows pode ter grudado numa
+            # borda) e usa essa âncora para os deltas — caso contrário todo
+            # movimento sairia com um deslocamento fixo.
+            anchor = self._controller.position
+            anchor_x, anchor_y = int(anchor[0]), int(anchor[1])
 
             def handle_move(x: int, y: int) -> None:
-                dx, dy = int(x) - center_x, int(y) - center_y
+                dx, dy = int(x) - anchor_x, int(y) - anchor_y
                 if dx == 0 and dy == 0:
                     return  # movimento gerado pela própria recentralização
-                self._controller.position = (center_x, center_y)
+                self._controller.position = (anchor_x, anchor_y)
                 on_move(dx, dy)
 
             def handle_click(x: int, y: int, button: Any, pressed: bool) -> None:

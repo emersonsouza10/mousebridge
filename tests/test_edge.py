@@ -1,7 +1,7 @@
 import unittest
 
 from zephyrlink.mouse.edge import EdgeDetector, entry_position, opposite_edge
-from zephyrlink.mouse.screen import ScreenInfo
+from zephyrlink.mouse.screen import ScreenInfo, enable_dpi_awareness, primary_center
 
 FHD = ScreenInfo(0, 0, 1920, 1080)
 UHD = ScreenInfo(0, 0, 3840, 2160)
@@ -99,6 +99,18 @@ class ScreenInfoTest(unittest.TestCase):
     def test_dict_roundtrip(self) -> None:
         screen = ScreenInfo(-1920, 0, 3840, 1080)
         self.assertEqual(ScreenInfo.from_dict(screen.to_dict()), screen)
+
+
+class PlatformHelpersTest(unittest.TestCase):
+    def test_dpi_awareness_is_noop_off_windows(self) -> None:
+        # Não deve lançar em nenhuma plataforma.
+        enable_dpi_awareness()
+
+    def test_primary_center_none_off_windows(self) -> None:
+        import sys
+
+        if sys.platform != "win32":
+            self.assertIsNone(primary_center())
 
 
 if __name__ == "__main__":

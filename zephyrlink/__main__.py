@@ -40,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Antes de qualquer consulta de tela ou criação de janela.
+    from zephyrlink.mouse import enable_dpi_awareness
+
+    enable_dpi_awareness()
     try:
         config = load_config(args.config)
     except ConfigError as exc:
