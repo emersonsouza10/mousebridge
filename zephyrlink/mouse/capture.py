@@ -9,7 +9,8 @@ própria; trocar ``suppress`` exige recriar o listener):
   aplicações locais) captura movimento como *deltas* usando o truque de
   recentralização: após cada movimento o cursor é devolvido ao centro da
   tela e o delta em relação ao centro é encaminhado. Isso permite movimento
-  contínuo sem o cursor local esbarrar nas bordas.
+  contínuo sem o cursor local esbarrar nas bordas. No Windows o ponteiro do
+  sistema fica oculto enquanto isso (ver cursor.py).
 
 Callbacks são chamados na thread do listener; quem consome deve fazer o
 handoff para o loop asyncio (ver server.py).
@@ -24,6 +25,7 @@ from typing import Any
 
 from pynput import mouse
 
+from zephyrlink.mouse.cursor import hide_pointer, show_pointer
 from zephyrlink.mouse.edge import EdgeDetector
 from zephyrlink.mouse.screen import ScreenInfo, primary_center
 
@@ -69,6 +71,7 @@ class MouseCapture:
         """
         with self._lock:
             self._stop_listener()
+            show_pointer()
             watched = list(detectors)
 
             def on_move(x: int, y: int) -> None:
@@ -124,12 +127,14 @@ class MouseCapture:
                 suppress=True,
             )
             self._listener.start()
+            hide_pointer()
             self._mode = "forward"
             logger.debug("Captura de mouse: modo forward (input local suprimido)")
 
     def stop(self) -> None:
         with self._lock:
             self._stop_listener()
+            show_pointer()
             self._mode = "stopped"
 
     def _stop_listener(self) -> None:

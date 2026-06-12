@@ -1,5 +1,6 @@
 import unittest
 
+from zephyrlink.mouse.cursor import hide_pointer, show_pointer
 from zephyrlink.mouse.edge import EdgeDetector, entry_position, opposite_edge
 from zephyrlink.mouse.screen import ScreenInfo, enable_dpi_awareness, primary_center
 
@@ -140,6 +141,10 @@ class PlatformHelpersTest(unittest.TestCase):
 
         if sys.platform != "win32":
             self.assertIsNone(primary_center())
+
+    def test_pointer_visibility_is_noop_off_windows(self) -> None:
+        hide_pointer()
+        show_pointer()
 
 
 if __name__ == "__main__":
