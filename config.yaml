@@ -1,0 +1,35 @@
+# Configuração do MouseBridge.
+# Todos os campos são opcionais; os valores abaixo são os padrões.
+
+role: server            # server (tem o mouse/teclado) | client (controlado)
+name: mousebridge       # nome anunciado na descoberta UDP
+log_level: INFO         # DEBUG | INFO | WARNING | ERROR
+log_json: false         # true => logs em JSON estruturado
+
+network:
+  tcp_port: 50510
+  discovery_port: 50511
+  manual_host: null     # IP do servidor; null => descoberta automática (cliente)
+  heartbeat_interval: 2.0
+  heartbeat_timeout: 8.0
+  reconnect_delay: 3.0
+  discovery_timeout: 5.0
+
+security:
+  shared_key: change-me # OBRIGATÓRIO trocar: mesma chave nas duas máquinas
+  use_tls: false
+  tls_cert: null        # caminho do certificado (servidor)
+  tls_key: null         # caminho da chave privada (servidor)
+  tls_ca: null          # CA para o cliente validar o servidor (opcional)
+  allowed_hosts: []     # vazio = todos; ex.: ["192.168.1.42", "192.168.1.*"]
+
+layout:
+  edge: right           # borda da tela principal onde está a secundária:
+                        # left | right | top | bottom
+  switch_margin: 1      # pixels de tolerância para considerar a borda atingida
+  return_inset: 3       # afastamento da borda ao devolver o cursor
+
+clipboard:
+  enabled: true
+  poll_interval: 0.5    # segundos entre verificações
+  max_bytes: 1000000    # tamanho máximo sincronizado

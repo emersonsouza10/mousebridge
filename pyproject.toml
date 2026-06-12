@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mousebridge"
+version = "0.1.0"
+description = "Compartilhamento de mouse e teclado entre dois computadores na mesma rede local"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "pynput>=1.7.6",
+    "pyautogui>=0.9.54",
+    "pyperclip>=1.8.2",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+mousebridge = "mousebridge.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["mousebridge*"]
