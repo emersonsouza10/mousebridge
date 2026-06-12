@@ -49,6 +49,7 @@ class KeyboardInjector:
         kind = payload.get("kind")
         name = payload.get("name")
         char = payload.get("char")
+        vk = payload.get("vk")
 
         if kind == "named" and name in _MODIFIERS:
             if pressed:
@@ -76,7 +77,14 @@ class KeyboardInjector:
                     self._unicode_held.discard(char)
                 return
 
-        key = payload_to_key(payload)
+        # Pela via de virtual key, re-resolver o caractere com VkKeyScan
+        # depende do layout da thread injetora e cai em Unicode literal
+        # quando não resolve (ex.: tecla ABNT_C1); o vk capturado no
+        # servidor reproduz a tecla física sobre o layout sincronizado.
+        if kind == "char" and sys.platform == "win32" and isinstance(vk, int):
+            key: Any = keyboard.KeyCode.from_vk(vk)
+        else:
+            key = payload_to_key(payload)
         if key is None:
             logger.warning("Tecla não reconhecida: %s", payload)
             return

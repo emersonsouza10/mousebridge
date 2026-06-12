@@ -7,6 +7,13 @@ class PayloadFromPartsTest(unittest.TestCase):
     def test_char_takes_priority(self) -> None:
         self.assertEqual(payload_from_parts(char="a"), {"kind": "char", "char": "a"})
 
+    def test_char_carries_vk_when_known(self) -> None:
+        self.assertEqual(
+            payload_from_parts(char="/", vk=0xC1),
+            {"kind": "char", "char": "/", "vk": 0xC1},
+        )
+        self.assertTrue(payload_is_valid({"kind": "char", "char": "/", "vk": 0xC1}))
+
     def test_named_key(self) -> None:
         self.assertEqual(payload_from_parts(name="ctrl_l"), {"kind": "named", "name": "ctrl_l"})
 

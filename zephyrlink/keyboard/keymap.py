@@ -2,7 +2,8 @@
 
 Uma tecla vira um payload JSON-friendly de três formas:
 
-* ``{"kind": "char", "char": "a"}`` — tecla de caractere imprimível;
+* ``{"kind": "char", "char": "a"}`` — tecla de caractere imprimível,
+  com ``vk`` da tecla física quando conhecido;
 * ``{"kind": "named", "name": "ctrl_l"}`` — tecla especial pelo nome
   pynput (``ctrl_l``, ``alt``, ``cmd``, ``f1``..., ``tab``, ``enter``...);
 * ``{"kind": "vk", "vk": 165}`` — fallback por virtual key code quando o
@@ -29,7 +30,10 @@ def payload_from_parts(
 ) -> dict[str, Any] | None:
     """Monta o payload a partir dos atributos extraídos de uma tecla."""
     if char is not None:
-        return {"kind": "char", "char": char}
+        payload: dict[str, Any] = {"kind": "char", "char": char}
+        if vk is not None:
+            payload["vk"] = int(vk)
+        return payload
     if name is not None:
         return {"kind": "named", "name": name}
     if vk is not None:
@@ -56,7 +60,7 @@ def key_to_payload(key: Any) -> dict[str, Any] | None:
         return payload_from_parts(name=key.name)
     if isinstance(key, keyboard.KeyCode):
         if key.char is not None:
-            return payload_from_parts(char=key.char)
+            return payload_from_parts(char=key.char, vk=key.vk)
         return payload_from_parts(vk=key.vk)
     return None
 
