@@ -169,7 +169,14 @@ class ZephyrLinkServer:
             await stream.send(Message(MsgType.AUTH_FAIL, {"reason": "chave inválida"}))
             return None
         assert self._screen is not None
-        await stream.send(Message(MsgType.AUTH_OK, {"screen": self._screen.to_dict()}))
+        from zephyrlink.keyboard.layout import current_layout_id
+
+        await stream.send(
+            Message(
+                MsgType.AUTH_OK,
+                {"screen": self._screen.to_dict(), "layout": current_layout_id()},
+            )
+        )
 
         info = await asyncio.wait_for(stream.receive(), timeout=10.0)
         if info.type != MsgType.SCREEN_INFO:

@@ -21,6 +21,7 @@ from zephyrlink.clipboard import ClipboardSync
 from zephyrlink.config import AppConfig
 from zephyrlink.discovery import discover_server
 from zephyrlink.discovery.beacon import get_local_ip
+from zephyrlink.keyboard.layout import activate_layout
 from zephyrlink.mouse import ScreenInfo, entry_position, get_virtual_screen, opposite_edge
 from zephyrlink.transport import Message, MessageStream, MsgType
 from zephyrlink.transport.security import build_client_ssl_context, sign_challenge
@@ -41,6 +42,7 @@ class ZephyrLinkClient:
         self._stream: MessageStream | None = None
         self._active = False
         self._return_edge: str | None = None
+        self._server_layout: str | None = None
         self._stopping = asyncio.Event()
 
     async def run(self) -> None:
@@ -104,6 +106,7 @@ class ZephyrLinkClient:
             await stream.close()
             await self._wait_retry()
             return
+        self._server_layout = result.data.get("layout")
         assert self._screen is not None
         await stream.send(
             Message(
@@ -161,6 +164,7 @@ class ZephyrLinkClient:
         self._return_edge = opposite_edge(server_edge)
         x, y = entry_position(self._return_edge, ratio, self._screen, inset=2)
         self._mouse.set_position(x, y)
+        activate_layout(self._server_layout)
         self._active = True
         logger.info("Controle recebido (entrada pela borda %s)", self._return_edge)
         self._emit_status()
