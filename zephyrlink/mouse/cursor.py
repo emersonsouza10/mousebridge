@@ -5,6 +5,10 @@ a captura de deltas; ocultá-lo passa a impressão de que o mouse "foi" para
 a outra máquina. O Windows não tem API para esconder o ponteiro do sistema
 inteiro, então os cursores padrão são trocados por um cursor transparente
 e depois restaurados a partir do registro. Fora do Windows é no-op.
+
+Um processo-guardião garante a restauração mesmo se o processo principal
+for morto à força (sem atexit): ele bloqueia lendo um pipe que o sistema
+operacional fecha quando o pai morre — aí restaura os cursores e sai.
 """
 
 from __future__ import annotations
@@ -33,6 +37,30 @@ _SYSTEM_CURSOR_IDS = (
 SPI_SETCURSORS = 0x0057
 
 _hidden = False
+_guardian = None
+
+_GUARDIAN_SCRIPT = (
+    "import ctypes,sys;"
+    "sys.stdin.buffer.read();"
+    "ctypes.windll.user32.SystemParametersInfoW(0x0057,0,None,0)"
+)
+
+
+def _ensure_guardian() -> None:
+    global _guardian
+    if _guardian is not None and _guardian.poll() is None:
+        return
+    import subprocess
+
+    CREATE_NO_WINDOW = 0x08000000
+    try:
+        _guardian = subprocess.Popen(
+            [sys.executable, "-c", _GUARDIAN_SCRIPT],
+            stdin=subprocess.PIPE,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except OSError:
+        logger.warning("Não foi possível iniciar o guardião de cursores")
 
 
 def hide_pointer() -> None:
@@ -41,6 +69,7 @@ def hide_pointer() -> None:
         return
     import ctypes
 
+    _ensure_guardian()
     user32 = ctypes.windll.user32
     try:
         SM_CXCURSOR, SM_CYCURSOR = 13, 14
