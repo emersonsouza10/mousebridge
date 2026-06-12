@@ -54,6 +54,15 @@ class Input(ctypes.Structure):
     _fields_ = (("type", _DWORD), ("value", InputValue))
 
 
+def caps_lock_active() -> bool:
+    if sys.platform != "win32":
+        return False
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetKeyState.argtypes = (ctypes.c_int,)
+    user32.GetKeyState.restype = ctypes.c_short
+    return bool(user32.GetKeyState(0x14) & 1)
+
+
 def send_unicode(char: str, pressed: bool) -> bool:
     if sys.platform != "win32":
         return False

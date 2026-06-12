@@ -13,11 +13,16 @@ from typing import Any
 from pynput import keyboard
 
 from zephyrlink.keyboard.keymap import payload_to_key
-from zephyrlink.keyboard.win32_input import send_unicode
+from zephyrlink.keyboard.win32_input import caps_lock_active, send_unicode
 
 logger = logging.getLogger(__name__)
 
-_SHORTCUT_MODIFIERS = {
+# A captura supressiva no servidor reporta sempre o caractere sem shift
+# (teclas suprimidas não atualizam o estado assíncrono dos modificadores),
+# então com modificador ativo a injeção vai pela via de virtual key: o
+# cliente mantém o modificador e o sistema reaplica shift/altgr sobre o
+# layout sincronizado. A via Unicode digitaria o caractere literal.
+_MODIFIERS = {
     "alt",
     "alt_l",
     "alt_r",
@@ -28,13 +33,16 @@ _SHORTCUT_MODIFIERS = {
     "ctrl",
     "ctrl_l",
     "ctrl_r",
+    "shift",
+    "shift_l",
+    "shift_r",
 }
 
 class KeyboardInjector:
     def __init__(self) -> None:
         self._controller = keyboard.Controller()
         self._held: set[Any] = set()
-        self._shortcut_modifiers: set[str] = set()
+        self._modifiers: set[str] = set()
         self._unicode_held: set[str] = set()
 
     def key_event(self, payload: dict[str, Any], pressed: bool) -> None:
@@ -42,18 +50,22 @@ class KeyboardInjector:
         name = payload.get("name")
         char = payload.get("char")
 
-        if kind == "named" and name in _SHORTCUT_MODIFIERS:
+        if kind == "named" and name in _MODIFIERS:
             if pressed:
-                self._shortcut_modifiers.add(name)
+                self._modifiers.add(name)
             else:
-                self._shortcut_modifiers.discard(name)
+                self._modifiers.discard(name)
 
         if kind == "char" and isinstance(char, str):
             use_unicode = (
                 sys.platform == "win32"
                 and (
                     char in self._unicode_held
-                    or (pressed and not self._shortcut_modifiers)
+                    or (
+                        pressed
+                        and not self._modifiers
+                        and not (char.isalpha() and caps_lock_active())
+                    )
                 )
             )
             if use_unicode:
@@ -89,4 +101,4 @@ class KeyboardInjector:
         for char in list(self._unicode_held):
             send_unicode(char, False)
         self._unicode_held.clear()
-        self._shortcut_modifiers.clear()
+        self._modifiers.clear()
