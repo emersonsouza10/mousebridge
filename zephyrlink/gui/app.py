@@ -84,8 +84,6 @@ class ZephyrLinkGUI:
         self._build_widgets()
         self._root.after(POLL_MS, self._poll_queues)
 
-    # --------------------------------------------------------- widgets
-
     def _build_widgets(self) -> None:
         main = ttk.Frame(self._root, padding=10)
         main.pack(fill=tk.BOTH, expand=True)
@@ -168,8 +166,6 @@ class ZephyrLinkGUI:
                                 fill=secondary_fill, outline="#cccccc")
         canvas.create_text(cx + dx, cy + dy, text="Secundário", fill="white")
 
-    # ----------------------------------------------------------- ações
-
     def _on_start(self) -> None:
         manual = self._host_var.get().strip() or None
         config = replace(
@@ -195,8 +191,6 @@ class ZephyrLinkGUI:
     def _on_close(self) -> None:
         self._on_stop()
         self._root.destroy()
-
-    # ------------------------------------------------------------ polls
 
     def _poll_queues(self) -> None:
         try:

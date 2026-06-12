@@ -18,7 +18,7 @@ from zephyrlink.keyboard.keymap import key_to_payload
 
 logger = logging.getLogger(__name__)
 
-OnKey = Callable[[dict[str, Any], bool], None]  # payload, pressionada
+OnKey = Callable[[dict[str, Any], bool], None]
 
 
 class KeyboardCapture:

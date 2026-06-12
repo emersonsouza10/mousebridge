@@ -29,10 +29,10 @@ from zephyrlink.mouse.screen import ScreenInfo, primary_center
 
 logger = logging.getLogger(__name__)
 
-OnEdgeHit = Callable[[str, float], None]     # borda atingida, ratio ao longo dela
-OnMove = Callable[[int, int], None]          # dx, dy
-OnButton = Callable[[str, bool], None]       # botão, pressionado
-OnScroll = Callable[[int, int], None]        # dx, dy
+OnEdgeHit = Callable[[str, float], None]
+OnMove = Callable[[int, int], None]
+OnButton = Callable[[str, bool], None]
+OnScroll = Callable[[int, int], None]
 
 BUTTON_NAMES: dict[Any, str] = {
     mouse.Button.left: "left",

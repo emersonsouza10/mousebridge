@@ -66,15 +66,13 @@ class ZephyrLinkServer:
         self._on_status = on_status
         self._screen: ScreenInfo | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._clients: dict[str, ClientSession] = {}   # borda -> sessão
-        self._active_edge: str | None = None           # None = controle local
+        self._clients: dict[str, ClientSession] = {}
+        self._active_edge: str | None = None
         self._event_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=2048)
         self._mouse_capture: Any = None
         self._keyboard_capture: Any = None
         self._clipboard = ClipboardSync(config.clipboard)
         self._stopping = asyncio.Event()
-
-    # ------------------------------------------------------------- ciclo
 
     async def run(self) -> None:
         from zephyrlink.keyboard.capture import KeyboardCapture
@@ -125,8 +123,6 @@ class ZephyrLinkServer:
     def stop(self) -> None:
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._stopping.set)
-
-    # -------------------------------------------------------- conexões
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         stream = MessageStream(reader, writer)
@@ -201,14 +197,11 @@ class ZephyrLinkServer:
             task.cancel()
         await session.stream.close()
         if return_local and self._active_edge == edge:
-            # Cliente ativo caiu: recupera o input local.
             await self._return_to_local(ratio=0.5)
         else:
             self._refresh_monitor()
         logger.info("Cliente da borda '%s' desconectado (%d restante(s))", edge, len(self._clients))
         self._emit_status()
-
-    # ------------------------------------------------- troca de controle
 
     def _refresh_monitor(self) -> None:
         """Reconstrói a vigília de bordas a partir dos clientes conectados.
@@ -270,8 +263,6 @@ class ZephyrLinkServer:
         logger.info("Controle retornou para a máquina local (da borda '%s', ratio=%.2f)", edge, ratio)
         self._emit_status()
 
-    # --------------------------------------------------- envio/recepção
-
     def _forward(self, msg_type: MsgType, *fields: str) -> Callable[..., None]:
         """Cria callback de captura que enfileira o evento (thread-safe)."""
         assert self._loop is not None
@@ -330,8 +321,6 @@ class ZephyrLinkServer:
             with contextlib.suppress(ConnectionError, OSError):
                 await session.stream.send(Message(MsgType.PING, {}))
 
-    # ------------------------------------------------------------ clipboard
-
     async def _on_local_clipboard(self, text: str) -> None:
         await self._broadcast_clipboard(text)
 
@@ -341,8 +330,6 @@ class ZephyrLinkServer:
                 continue
             with contextlib.suppress(ConnectionError, OSError):
                 await session.stream.send(Message(MsgType.CLIPBOARD, {"text": text}))
-
-    # ------------------------------------------------------------ status
 
     def _emit_status(self) -> None:
         if self._on_status is None:

@@ -38,7 +38,6 @@ class LoadYamlTest(unittest.TestCase):
         self.assertEqual(config.layout.edge, "left")
         self.assertEqual(config.security.shared_key, "segredo")
         self.assertEqual(config.security.allowed_hosts, ("10.0.0.*",))
-        # não declarado mantém o padrão
         self.assertEqual(config.network.tcp_port, 50510)
 
     def test_missing_file_raises(self) -> None:

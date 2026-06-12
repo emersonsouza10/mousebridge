@@ -21,9 +21,9 @@ class MsgType(StrEnum):
     AUTH_OK = "auth_ok"
     AUTH_FAIL = "auth_fail"
     SCREEN_INFO = "screen_info"
-    ENTER = "enter"            # controle passa para o secundário
-    LEAVE = "leave"            # controle volta para o principal
-    MOUSE_MOVE = "mouse_move"  # delta relativo {dx, dy}
+    ENTER = "enter"
+    LEAVE = "leave"
+    MOUSE_MOVE = "mouse_move"
     MOUSE_BUTTON = "mouse_button"
     MOUSE_SCROLL = "mouse_scroll"
     KEY_EVENT = "key_event"

@@ -39,11 +39,9 @@ class ZephyrLinkClient:
         self._keyboard: Any = None
         self._clipboard = ClipboardSync(config.clipboard)
         self._stream: MessageStream | None = None
-        self._active = False          # esta máquina está sendo controlada?
+        self._active = False
         self._return_edge: str | None = None
         self._stopping = asyncio.Event()
-
-    # ------------------------------------------------------------- ciclo
 
     async def run(self) -> None:
         from zephyrlink.keyboard.injector import KeyboardInjector
@@ -87,8 +85,6 @@ class ZephyrLinkClient:
             timeout=self._config.network.discovery_timeout,
         )
 
-    # ------------------------------------------------------------ sessão
-
     async def _session(self, host: str, port: int) -> None:
         logger.info("Conectando a %s:%d...", host, port)
         ssl_context = build_client_ssl_context(self._config.security)
@@ -109,7 +105,6 @@ class ZephyrLinkClient:
             await self._wait_retry()
             return
         assert self._screen is not None
-        # Declara qual borda do servidor esta máquina ocupa (topologia estrela).
         await stream.send(
             Message(
                 MsgType.SCREEN_INFO,
@@ -136,8 +131,6 @@ class ZephyrLinkClient:
         if stream is not None:
             await stream.close()
         self._emit_status()
-
-    # --------------------------------------------------------- recepção
 
     async def _receive_loop(self, stream: MessageStream) -> None:
         while True:
@@ -220,8 +213,6 @@ class ZephyrLinkClient:
         if self._stream is not None:
             with contextlib.suppress(ConnectionError, OSError):
                 await self._stream.send(Message(MsgType.CLIPBOARD, {"text": text}))
-
-    # ------------------------------------------------------------ status
 
     def _emit_status(self) -> None:
         if self._on_status is None:

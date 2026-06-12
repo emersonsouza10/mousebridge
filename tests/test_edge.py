@@ -43,7 +43,6 @@ class EdgeDetectorTest(unittest.TestCase):
         self.assertFalse(detector.hit(1914, 500))
 
     def test_multi_monitor_negative_origin(self) -> None:
-        # Monitor secundário à esquerda do principal: tela virtual começa em x=-1920.
         virtual = ScreenInfo(-1920, 0, 3840, 1080)
         detector = EdgeDetector("left", virtual)
         self.assertTrue(detector.hit(-1920, 300))
@@ -75,7 +74,6 @@ class EntryPositionTest(unittest.TestCase):
         self.assertEqual(y, 0)
 
     def test_resolution_mapping_preserves_ratio(self) -> None:
-        # Sai no meio da borda de uma tela FHD, entra no meio de uma UHD.
         detector = EdgeDetector("right", FHD)
         ratio = detector.exit_ratio(1919, 540)
         x, y = entry_position("left", ratio, UHD, inset=2)
@@ -109,7 +107,6 @@ class MultiEdgeSelectionTest(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        # Servidor com cliente à direita e cliente abaixo.
         self.detectors = [
             EdgeDetector("right", FHD),
             EdgeDetector("bottom", FHD),
@@ -131,13 +128,11 @@ class MultiEdgeSelectionTest(unittest.TestCase):
         self.assertIsNone(self._first_hit(960, 540))
 
     def test_untracked_border_selects_nothing(self) -> None:
-        # Borda esquerda não tem cliente registrado.
         self.assertIsNone(self._first_hit(0, 400))
 
 
 class PlatformHelpersTest(unittest.TestCase):
     def test_dpi_awareness_is_noop_off_windows(self) -> None:
-        # Não deve lançar em nenhuma plataforma.
         enable_dpi_awareness()
 
     def test_primary_center_none_off_windows(self) -> None:
