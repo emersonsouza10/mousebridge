@@ -19,9 +19,8 @@ logger = logging.getLogger(__name__)
 
 # A captura supressiva no servidor reporta sempre o caractere sem shift
 # (teclas suprimidas não atualizam o estado assíncrono dos modificadores),
-# então com modificador ativo a injeção vai pela via de virtual key: o
-# cliente mantém o modificador e o sistema reaplica shift/altgr sobre o
-# layout sincronizado. A via Unicode digitaria o caractere literal.
+# então com modificador ativo a via Unicode nunca pode ser usada: ela
+# digitaria o caractere literal sem reaplicar o modificador.
 _MODIFIERS = {
     "alt",
     "alt_l",
@@ -58,12 +57,18 @@ class KeyboardInjector:
                 self._modifiers.discard(name)
 
         if kind == "char" and isinstance(char, str):
+            # Com o vk físico no payload a injeção é sempre por virtual key:
+            # o sistema do cliente aplica shift/altgr/caps e o estado de
+            # tecla morta (~ + a = ã) sobre o layout sincronizado. A via
+            # Unicode digitaria o caractere literal, sem composição; fica
+            # como fallback para payloads sem vk (servidor não-Windows).
             use_unicode = (
                 sys.platform == "win32"
                 and (
                     char in self._unicode_held
                     or (
                         pressed
+                        and not isinstance(vk, int)
                         and not self._modifiers
                         and not (char.isalpha() and caps_lock_active())
                     )
@@ -77,10 +82,9 @@ class KeyboardInjector:
                     self._unicode_held.discard(char)
                 return
 
-        # Pela via de virtual key, re-resolver o caractere com VkKeyScan
-        # depende do layout da thread injetora e cai em Unicode literal
-        # quando não resolve (ex.: tecla ABNT_C1); o vk capturado no
-        # servidor reproduz a tecla física sobre o layout sincronizado.
+        # O vk capturado reproduz a tecla física; re-resolver o caractere
+        # com VkKeyScan dependeria do layout da thread injetora e cairia
+        # em Unicode literal quando não resolve (ex.: tecla ABNT_C1).
         if kind == "char" and sys.platform == "win32" and isinstance(vk, int):
             key: Any = keyboard.KeyCode.from_vk(vk)
         else:
