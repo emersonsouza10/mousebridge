@@ -11,7 +11,7 @@ import asyncio
 import struct
 
 HEADER = struct.Struct(">I")
-MAX_FRAME_SIZE = 4 * 1024 * 1024  # protege contra payloads absurdos/corrompidos
+MAX_FRAME_SIZE = 32 * 1024 * 1024  # protege contra payloads absurdos/corrompidos
 
 
 class FrameError(Exception):

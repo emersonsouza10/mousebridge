@@ -58,7 +58,7 @@ class LayoutConfig:
 class ClipboardConfig:
     enabled: bool = True
     poll_interval: float = 0.5
-    max_bytes: int = 1_000_000
+    max_bytes: int = 16_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +117,7 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
         clipboard=ClipboardConfig(
             enabled=bool(clip.get("enabled", True)),
             poll_interval=float(clip.get("poll_interval", 0.5)),
-            max_bytes=int(clip.get("max_bytes", 1_000_000)),
+            max_bytes=int(clip.get("max_bytes", 16_000_000)),
         ),
     )
 

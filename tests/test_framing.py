@@ -1,6 +1,12 @@
 import unittest
 
-from zephyrlink.transport.framing import HEADER, FrameDecoder, FrameError, encode_frame
+from zephyrlink.transport.framing import (
+    HEADER,
+    MAX_FRAME_SIZE,
+    FrameDecoder,
+    FrameError,
+    encode_frame,
+)
 
 
 class EncodeFrameTest(unittest.TestCase):
@@ -16,7 +22,7 @@ class EncodeFrameTest(unittest.TestCase):
 
     def test_oversized_payload_rejected(self) -> None:
         with self.assertRaises(FrameError):
-            encode_frame(b"x" * (5 * 1024 * 1024))
+            encode_frame(b"x" * (MAX_FRAME_SIZE + 1))
 
 
 class FrameDecoderTest(unittest.TestCase):
