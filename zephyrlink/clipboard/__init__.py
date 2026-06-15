@@ -1,3 +1,3 @@
-from zephyrlink.clipboard.sync import ClipboardSync
+from zephyrlink.clipboard.transfer import FileReceiver, FileTooLarge, build_manifest, send_files
 
-__all__ = ["ClipboardSync"]
+__all__ = ["FileReceiver", "FileTooLarge", "build_manifest", "send_files"]

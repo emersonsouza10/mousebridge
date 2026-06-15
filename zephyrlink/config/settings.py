@@ -59,6 +59,8 @@ class ClipboardConfig:
     enabled: bool = True
     poll_interval: float = 0.5
     max_bytes: int = 16_000_000
+    files_enabled: bool = True
+    file_max_bytes: int = 200_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +120,8 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
             enabled=bool(clip.get("enabled", True)),
             poll_interval=float(clip.get("poll_interval", 0.5)),
             max_bytes=int(clip.get("max_bytes", 16_000_000)),
+            files_enabled=bool(clip.get("files_enabled", True)),
+            file_max_bytes=int(clip.get("file_max_bytes", 200_000_000)),
         ),
     )
 

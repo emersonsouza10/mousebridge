@@ -17,7 +17,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from zephyrlink.clipboard import ClipboardSync
+from zephyrlink.clipboard.sync import ClipboardSync
+from zephyrlink.clipboard.transfer import send_files
 from zephyrlink.config import AppConfig
 from zephyrlink.discovery import discover_server
 from zephyrlink.discovery.beacon import get_local_ip
@@ -118,7 +119,7 @@ class ZephyrLinkClient:
         logger.info("Conectado a %s:%d na borda '%s' do servidor", host, port, self._config.layout.edge)
         self._stream = stream
         self._emit_status()
-        self._clipboard.start(self._send_clipboard)
+        self._clipboard.start(self._send_clipboard, self._send_files)
         watchdog = asyncio.create_task(self._watchdog_loop(stream), name="watchdog")
         try:
             await self._receive_loop(stream)
@@ -151,6 +152,8 @@ class ZephyrLinkClient:
                     self._handle_enter(str(message.data["edge"]), float(message.data["ratio"]))
                 case MsgType.CLIPBOARD:
                     await self._clipboard.apply_remote(str(message.data.get("text", "")))
+                case MsgType.FILE_OFFER | MsgType.FILE_DATA | MsgType.FILE_END:
+                    await self._clipboard.apply_file_message(message)
                 case MsgType.PING:
                     await stream.send(Message(MsgType.PONG, {}))
                 case MsgType.AUTH_FAIL:
@@ -217,6 +220,17 @@ class ZephyrLinkClient:
         if self._stream is not None:
             with contextlib.suppress(ConnectionError, OSError):
                 await self._stream.send(Message(MsgType.CLIPBOARD, {"text": text}))
+
+    async def _send_files(self, paths: list[str]) -> None:
+        stream = self._stream
+        if stream is None:
+            return
+
+        async def send(message: Message) -> None:
+            with contextlib.suppress(ConnectionError, OSError):
+                await stream.send(message)
+
+        await send_files(paths, send, max_total=self._config.clipboard.file_max_bytes)
 
     def _emit_status(self) -> None:
         if self._on_status is None:

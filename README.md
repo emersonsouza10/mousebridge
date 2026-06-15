@@ -93,7 +93,11 @@ zephyrlink client --key K --edge right --host 192.168.10.114
 zephyrlink client --key K --edge bottom --host 192.168.10.114
 ```
 
-A área de transferência é sincronizada entre **todas** as máquinas conectadas.
+A área de transferência é sincronizada entre **todas** as máquinas conectadas:
+**texto** em qualquer plataforma e **arquivos/pastas** (um ou vários, copiados
+no Explorer) entre máquinas Windows. Os arquivos vão em pedaços pelo mesmo canal
+e ficam prontos para colar no destino; o teto por transferência é
+`clipboard.file_max_bytes`.
 
 ### Interface gráfica
 
@@ -217,6 +221,7 @@ thread-safe drenadas via `after()`; o núcleo nunca chama widgets diretamente.
 | `KEY_EVENT` | servidor → cliente | tecla serializada + pressionada/solta |
 | `LEAVE` | cliente → servidor | razão: controle volta ao servidor |
 | `CLIPBOARD` | ambas | texto da área de transferência |
+| `FILE_OFFER` / `FILE_DATA` / `FILE_END` | ambas | manifesto + pedaços (base64) + fim de uma transferência de arquivos |
 | `PING` / `PONG` | ambas | heartbeat |
 
 ## Testes
@@ -225,7 +230,7 @@ thread-safe drenadas via `after()`; o núcleo nunca chama widgets diretamente.
 python -m unittest discover -s tests -v
 ```
 
-A suíte (61 casos) cobre framing incremental, (de)serialização do protocolo,
+A suíte (81 casos) cobre framing incremental, (de)serialização do protocolo,
 autenticação HMAC, allowlist, carregamento/validação de configuração, detecção de borda
 (incluindo multi-monitor com origem negativa e mapeamento entre resoluções), pacotes de
 descoberta e um handshake de autenticação completo sobre TCP real em loopback. Os testes
@@ -233,7 +238,9 @@ não exigem display nem as bibliotecas de input instaladas.
 
 ## Limitações conhecidas
 
-- Clipboard sincroniza apenas **texto** (limitação do pyperclip).
+- Clipboard de **texto** funciona em qualquer plataforma; o de **arquivos/pastas**
+  é Windows↔Windows (usa `CF_HDROP`). Cópias simultâneas de máquinas diferentes
+  serializam (uma transferência ativa por vez).
 - No Windows, aplicações elevadas (executando como administrador) não recebem eventos
   injetados a menos que o ZephyrLink também rode elevado.
 - `Ctrl+Alt+Del` e a tela de bloqueio não são capturáveis (restrição do sistema).

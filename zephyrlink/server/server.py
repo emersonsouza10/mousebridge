@@ -30,7 +30,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from zephyrlink.clipboard import ClipboardSync
+from zephyrlink.clipboard.sync import ClipboardSync
+from zephyrlink.clipboard.transfer import send_files
 from zephyrlink.config import AppConfig
 from zephyrlink.config.settings import VALID_EDGES
 from zephyrlink.discovery import DiscoveryResponder
@@ -104,7 +105,7 @@ class ZephyrLinkServer:
             self._screen.height,
         )
         sender = asyncio.create_task(self._sender_loop(), name="sender")
-        self._clipboard.start(self._on_local_clipboard)
+        self._clipboard.start(self._on_local_clipboard, self._on_local_files)
         self._emit_status()
 
         try:
@@ -318,6 +319,9 @@ class ZephyrLinkServer:
                     text = str(message.data.get("text", ""))
                     await self._clipboard.apply_remote(text)
                     await self._broadcast_clipboard(text, exclude_edge=session.edge)
+                case MsgType.FILE_OFFER | MsgType.FILE_DATA | MsgType.FILE_END:
+                    await self._clipboard.apply_file_message(message)
+                    await self._broadcast_message(message, exclude_edge=session.edge)
                 case MsgType.PONG:
                     pass  # last_received já atualizado pelo stream
                 case _:
@@ -340,11 +344,19 @@ class ZephyrLinkServer:
         await self._broadcast_clipboard(text)
 
     async def _broadcast_clipboard(self, text: str, exclude_edge: str | None = None) -> None:
+        await self._broadcast_message(Message(MsgType.CLIPBOARD, {"text": text}), exclude_edge)
+
+    async def _broadcast_message(self, message: Message, exclude_edge: str | None = None) -> None:
         for edge, session in list(self._clients.items()):
             if edge == exclude_edge:
                 continue
             with contextlib.suppress(ConnectionError, OSError):
-                await session.stream.send(Message(MsgType.CLIPBOARD, {"text": text}))
+                await session.stream.send(message)
+
+    async def _on_local_files(self, paths: list[str]) -> None:
+        if not self._clients:
+            return
+        await send_files(paths, self._broadcast_message, max_total=self._config.clipboard.file_max_bytes)
 
     def _emit_status(self) -> None:
         if self._on_status is None:

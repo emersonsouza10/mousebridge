@@ -28,6 +28,9 @@ class MsgType(StrEnum):
     MOUSE_SCROLL = "mouse_scroll"
     KEY_EVENT = "key_event"
     CLIPBOARD = "clipboard"
+    FILE_OFFER = "file_offer"
+    FILE_DATA = "file_data"
+    FILE_END = "file_end"
     PING = "ping"
     PONG = "pong"
 

@@ -35,4 +35,6 @@ layout:
 clipboard:
   enabled: true
   poll_interval: 0.5    # segundos entre verificações
-  max_bytes: 16000000   # tamanho máximo sincronizado (bytes UTF-8)
+  max_bytes: 16000000   # tamanho máximo de TEXTO sincronizado (bytes UTF-8)
+  files_enabled: true   # copiar/colar arquivos entre as máquinas (Windows)
+  file_max_bytes: 200000000  # teto total por transferência de arquivos (bytes)
