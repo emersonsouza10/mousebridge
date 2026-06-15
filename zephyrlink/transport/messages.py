@@ -51,3 +51,30 @@ class Message:
             return cls(type=MsgType(raw["t"]), data=raw.get("d") or {})
         except (ValueError, KeyError, TypeError) as exc:
             raise ProtocolError(f"mensagem inválida: {exc}") from exc
+
+
+def coalesce_moves(batch: list[Message]) -> list[Message]:
+    """Funde sequências de MOUSE_MOVE adjacentes somando seus deltas.
+
+    Movimento relativo é cumulativo: somar deltas consecutivos é equivalente
+    a aplicá-los um a um, mas em um único pacote. Botões, scroll e teclas são
+    barreiras — nunca são reordenados em relação aos movimentos, preservando
+    o comportamento de clique-no-lugar-certo.
+    """
+    out: list[Message] = []
+    acc_dx = acc_dy = 0
+    pending = False
+    for msg in batch:
+        if msg.type is MsgType.MOUSE_MOVE:
+            acc_dx += int(msg.data["dx"])
+            acc_dy += int(msg.data["dy"])
+            pending = True
+            continue
+        if pending:
+            out.append(Message(MsgType.MOUSE_MOVE, {"dx": acc_dx, "dy": acc_dy}))
+            acc_dx = acc_dy = 0
+            pending = False
+        out.append(msg)
+    if pending:
+        out.append(Message(MsgType.MOUSE_MOVE, {"dx": acc_dx, "dy": acc_dy}))
+    return out

@@ -36,7 +36,7 @@ from zephyrlink.config.settings import VALID_EDGES
 from zephyrlink.discovery import DiscoveryResponder
 from zephyrlink.discovery.beacon import get_local_ip
 from zephyrlink.mouse import EdgeDetector, ScreenInfo, get_virtual_screen, return_position
-from zephyrlink.transport import Message, MessageStream, MsgType
+from zephyrlink.transport import Message, MessageStream, MsgType, coalesce_moves
 from zephyrlink.transport.security import (
     build_server_ssl_context,
     host_allowed,
@@ -289,7 +289,15 @@ class ZephyrLinkServer:
 
     async def _sender_loop(self) -> None:
         while True:
-            message = await self._event_queue.get()
+            batch = [await self._event_queue.get()]
+            # Drena sem aguardar tudo que se acumulou enquanto o envio
+            # anterior estava em voo: sob movimento rápido (mouse a 125Hz+)
+            # vários eventos chegam entre dois envios e serão coalescidos.
+            while True:
+                try:
+                    batch.append(self._event_queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
             edge = self._active_edge
             if edge is None:
                 continue  # evento atrasado de uma sessão remota já encerrada
@@ -297,7 +305,7 @@ class ZephyrLinkServer:
             if session is None:
                 continue
             with contextlib.suppress(ConnectionError, OSError):
-                await session.stream.send(message)
+                await session.stream.send_many(coalesce_moves(batch))
 
     async def _receive_loop(self, session: ClientSession) -> None:
         while True:
