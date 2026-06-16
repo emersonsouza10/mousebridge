@@ -90,6 +90,41 @@ def _windows_virtual_screen() -> ScreenInfo:
     )
 
 
+def _windows_monitors() -> list[ScreenInfo]:
+    import ctypes
+    from ctypes import wintypes
+
+    monitors: list[ScreenInfo] = []
+
+    proc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL, wintypes.HANDLE, wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT), wintypes.LPARAM,
+    )
+
+    def _callback(_hmon, _hdc, lprect, _lparam):  # type: ignore[no-untyped-def]
+        r = lprect.contents
+        monitors.append(ScreenInfo(r.left, r.top, r.right - r.left, r.bottom - r.top))
+        return 1
+
+    if not ctypes.windll.user32.EnumDisplayMonitors(0, 0, proc(_callback), 0):
+        raise OSError("EnumDisplayMonitors retornou 0")
+    return monitors
+
+
+def get_monitors() -> list[ScreenInfo]:
+    """Lista cada monitor físico. Fora do Windows (ou em falha) devolve a
+    tela virtual inteira como um único item."""
+    if sys.platform == "win32":
+        try:
+            screens = _windows_monitors()
+            if screens:
+                logger.debug("Monitores (Windows): %s", screens)
+                return screens
+        except Exception:  # noqa: BLE001 - qualquer falha cai no fallback
+            logger.warning("EnumDisplayMonitors falhou, usando tela virtual")
+    return [get_virtual_screen()]
+
+
 def primary_center() -> tuple[int, int] | None:
     """Centro do monitor primário (sempre dentro de um monitor físico).
 
