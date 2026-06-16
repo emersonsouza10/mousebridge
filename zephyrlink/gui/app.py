@@ -104,6 +104,10 @@ class ZephyrLinkGUI:
         self._host_var = tk.StringVar(value=self._config.network.manual_host or "")
         ttk.Entry(controls, textvariable=self._host_var, width=18).grid(row=2, column=1, sticky="w",
                                                                         padx=8, pady=(6, 0))
+        ttk.Label(controls, text="Chave compartilhada:").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        self._key_var = tk.StringVar(value=self._config.security.shared_key)
+        ttk.Entry(controls, textvariable=self._key_var, width=18, show="•").grid(
+            row=3, column=1, sticky="w", padx=8, pady=(6, 0))
         self._start_btn = ttk.Button(controls, text="Iniciar", command=self._on_start)
         self._start_btn.grid(row=0, column=2, rowspan=2, padx=12)
         self._stop_btn = ttk.Button(controls, text="Parar", command=self._on_stop, state=tk.DISABLED)
@@ -173,6 +177,7 @@ class ZephyrLinkGUI:
             role=self._role_var.get(),
             layout=replace(self._config.layout, edge=self._edge_var.get()),
             network=replace(self._config.network, manual_host=manual),
+            security=replace(self._config.security, shared_key=self._key_var.get()),
         )
         self._core_thread = _CoreThread(config, self._status_queue)
         self._core_thread.start()
