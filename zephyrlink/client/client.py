@@ -109,14 +109,9 @@ class ZephyrLinkClient:
             return
         self._server_layout = result.data.get("layout")
         assert self._screen is not None
-        await stream.send(
-            Message(
-                MsgType.SCREEN_INFO,
-                {"screen": self._screen.to_dict(), "edge": self._config.layout.edge},
-            )
-        )
+        await stream.send(Message(MsgType.SCREEN_INFO, {"screen": self._screen.to_dict()}))
 
-        logger.info("Conectado a %s:%d na borda '%s' do servidor", host, port, self._config.layout.edge)
+        logger.info("Conectado a %s:%d (o servidor define a borda)", host, port)
         self._stream = stream
         self._emit_status()
         self._clipboard.start(self._send_clipboard, self._send_files)

@@ -50,14 +50,21 @@ logger = logging.getLogger(__name__)
 StatusCallback = Callable[[dict[str, Any]], None]
 
 
+# Ordem em que bordas livres são atribuídas a clientes que conectam.
+ASSIGN_ORDER = ("right", "left", "bottom", "top")
+
+
 @dataclass(slots=True)
 class ClientSession:
-    """Uma conexão de cliente ativa, associada à borda do servidor que ocupa."""
+    """Uma conexão de cliente ativa. ``edge`` é a borda do servidor que ela
+    ocupa no momento (``None`` enquanto não houver borda livre); o servidor é
+    quem decide e pode remapear em runtime."""
 
-    edge: str
+    cid: int
     host: str
     stream: MessageStream
     screen: dict[str, int]
+    edge: str | None = None
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
 
@@ -67,7 +74,9 @@ class ZephyrLinkServer:
         self._on_status = on_status
         self._screen: ScreenInfo | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._clients: dict[str, ClientSession] = {}
+        self._clients: dict[int, ClientSession] = {}
+        self._edges: dict[str, int] = {}
+        self._next_cid: int = 0
         self._active_edge: str | None = None
         self._event_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=2048)
         self._mouse_capture: Any = None
@@ -115,8 +124,8 @@ class ZephyrLinkServer:
             server.close()
             discovery.close()
             self._clipboard.stop()
-            for edge in list(self._clients):
-                await self._drop_client(edge, return_local=False)
+            for cid in list(self._clients):
+                await self._drop_client(cid, return_local=False)
             self._mouse_capture.stop()
             self._keyboard_capture.stop()
             logger.info("Servidor finalizado")
@@ -142,22 +151,28 @@ class ZephyrLinkServer:
             await stream.close()
             return
 
-        self._clients[session.edge] = session
+        self._clients[session.cid] = session
+        edge = self._first_free_edge()
+        if edge is not None:
+            self._edges[edge] = session.cid
+            session.edge = edge
         logger.info(
-            "Cliente conectado: %s na borda '%s' (%d cliente(s) ativo(s))",
-            host, session.edge, len(self._clients),
+            "Cliente conectado: %s %s (%d cliente(s) ativo(s))",
+            host,
+            f"na borda '{edge}'" if edge else "(sem borda livre; arraste na GUI)",
+            len(self._clients),
         )
         self._refresh_monitor()
         self._emit_status()
 
-        heartbeat = asyncio.create_task(self._heartbeat_loop(session), name=f"hb-{session.edge}")
+        heartbeat = asyncio.create_task(self._heartbeat_loop(session), name=f"hb-{session.cid}")
         session.tasks = [heartbeat]
         try:
             await self._receive_loop(session)
         except (ConnectionError, asyncio.IncompleteReadError, OSError) as exc:
             logger.info("Conexão com %s (borda '%s') perdida: %s", host, session.edge, exc)
         finally:
-            await self._drop_client(session.edge)
+            await self._drop_client(session.cid)
 
     async def _authenticate(self, stream: MessageStream, host: str) -> ClientSession | None:
         nonce = make_challenge()
@@ -182,33 +197,58 @@ class ZephyrLinkServer:
         info = await asyncio.wait_for(stream.receive(), timeout=10.0)
         if info.type != MsgType.SCREEN_INFO:
             return None
-        edge = str(info.data.get("edge", "")).lower()
-        if edge not in VALID_EDGES:
-            logger.warning("Cliente %s enviou borda inválida: %r", host, edge)
-            await stream.send(Message(MsgType.AUTH_FAIL, {"reason": "borda inválida"}))
-            return None
-        if edge in self._clients:
-            logger.warning(
-                "Borda '%s' já ocupada por %s; recusando %s",
-                edge, self._clients[edge].host, host,
-            )
-            await stream.send(Message(MsgType.AUTH_FAIL, {"reason": f"borda '{edge}' já ocupada"}))
-            return None
         logger.info("Tela remota de %s: %s", host, info.data.get("screen"))
-        return ClientSession(edge=edge, host=host, stream=stream, screen=info.data.get("screen") or {})
+        cid = self._next_cid
+        self._next_cid += 1
+        return ClientSession(cid=cid, host=host, stream=stream, screen=info.data.get("screen") or {})
 
-    async def _drop_client(self, edge: str, return_local: bool = True) -> None:
-        session = self._clients.pop(edge, None)
+    async def _drop_client(self, cid: int, return_local: bool = True) -> None:
+        session = self._clients.pop(cid, None)
         if session is None:
             return
         for task in session.tasks:
             task.cancel()
         await session.stream.close()
-        if return_local and self._active_edge == edge:
+        edge = session.edge
+        if edge is not None and self._edges.get(edge) == cid:
+            del self._edges[edge]
+        if return_local and edge is not None and self._active_edge == edge:
             await self._return_to_local(ratio=0.5)
         else:
             self._refresh_monitor()
-        logger.info("Cliente da borda '%s' desconectado (%d restante(s))", edge, len(self._clients))
+        logger.info(
+            "Cliente %s (borda '%s') desconectado (%d restante(s))",
+            session.host, edge, len(self._clients),
+        )
+        self._emit_status()
+
+    def _first_free_edge(self) -> str | None:
+        for edge in ASSIGN_ORDER:
+            if edge not in self._edges:
+                return edge
+        return None
+
+    def assign_edge(self, cid: int, edge: str | None) -> None:
+        """Reatribui (ou desencaixa) um cliente a uma borda. Thread-safe:
+        chamável pela GUI, que roda em thread separada."""
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._assign_edge, cid, edge)
+
+    def _assign_edge(self, cid: int, edge: str | None) -> None:
+        session = self._clients.get(cid)
+        if session is None or (edge is not None and edge not in VALID_EDGES):
+            return
+        if session.edge is not None and self._edges.get(session.edge) == cid:
+            del self._edges[session.edge]
+        if edge is not None:
+            occupant = self._edges.get(edge)
+            if occupant is not None and occupant != cid:
+                # Desencaixa o ocupante anterior; ele fica sem borda.
+                self._clients[occupant].edge = None
+            self._edges[edge] = cid
+        session.edge = edge
+        logger.info("Cliente %s movido para a borda '%s'", session.host, edge)
+        self._refresh_monitor()
         self._emit_status()
 
     def _refresh_monitor(self) -> None:
@@ -222,7 +262,7 @@ class ZephyrLinkServer:
         assert self._screen is not None
         detectors = [
             EdgeDetector(edge=edge, screen=self._screen, margin=self._config.layout.switch_margin)
-            for edge in self._clients
+            for edge in self._edges
         ]
         if detectors:
             self._mouse_capture.start_monitor(detectors, self._edge_hit_from_thread)
@@ -234,13 +274,13 @@ class ZephyrLinkServer:
         self._loop.call_soon_threadsafe(self._schedule_enter_remote, edge, ratio)
 
     def _schedule_enter_remote(self, edge: str, ratio: float) -> None:
-        if self._active_edge is None and edge in self._clients:
+        if self._active_edge is None and edge in self._edges:
             asyncio.create_task(self._enter_remote(edge, ratio))
 
     async def _enter_remote(self, edge: str, ratio: float) -> None:
-        if self._active_edge is not None or edge not in self._clients:
+        if self._active_edge is not None or edge not in self._edges:
             return
-        session = self._clients[edge]
+        session = self._clients[self._edges[edge]]
         self._active_edge = edge
         logger.info("Controle transferido para cliente '%s' (ratio=%.2f)", edge, ratio)
         try:
@@ -302,7 +342,8 @@ class ZephyrLinkServer:
             edge = self._active_edge
             if edge is None:
                 continue  # evento atrasado de uma sessão remota já encerrada
-            session = self._clients.get(edge)
+            cid = self._edges.get(edge)
+            session = self._clients.get(cid) if cid is not None else None
             if session is None:
                 continue
             with contextlib.suppress(ConnectionError, OSError):
@@ -318,10 +359,10 @@ class ZephyrLinkServer:
                 case MsgType.CLIPBOARD:
                     text = str(message.data.get("text", ""))
                     await self._clipboard.apply_remote(text)
-                    await self._broadcast_clipboard(text, exclude_edge=session.edge)
+                    await self._broadcast_clipboard(text, exclude_cid=session.cid)
                 case MsgType.FILE_OFFER | MsgType.FILE_DATA | MsgType.FILE_END:
                     await self._clipboard.apply_file_message(message)
-                    await self._broadcast_message(message, exclude_edge=session.edge)
+                    await self._broadcast_message(message, exclude_cid=session.cid)
                 case MsgType.PONG:
                     pass  # last_received já atualizado pelo stream
                 case _:
@@ -343,12 +384,12 @@ class ZephyrLinkServer:
     async def _on_local_clipboard(self, text: str) -> None:
         await self._broadcast_clipboard(text)
 
-    async def _broadcast_clipboard(self, text: str, exclude_edge: str | None = None) -> None:
-        await self._broadcast_message(Message(MsgType.CLIPBOARD, {"text": text}), exclude_edge)
+    async def _broadcast_clipboard(self, text: str, exclude_cid: int | None = None) -> None:
+        await self._broadcast_message(Message(MsgType.CLIPBOARD, {"text": text}), exclude_cid)
 
-    async def _broadcast_message(self, message: Message, exclude_edge: str | None = None) -> None:
-        for edge, session in list(self._clients.items()):
-            if edge == exclude_edge:
+    async def _broadcast_message(self, message: Message, exclude_cid: int | None = None) -> None:
+        for cid, session in list(self._clients.items()):
+            if cid == exclude_cid:
                 continue
             with contextlib.suppress(ConnectionError, OSError):
                 await session.stream.send(message)
@@ -361,13 +402,16 @@ class ZephyrLinkServer:
     def _emit_status(self) -> None:
         if self._on_status is None:
             return
-        clients = {edge: session.host for edge, session in self._clients.items()}
+        clients = [
+            {"cid": s.cid, "host": s.host, "edge": s.edge, "screen": s.screen}
+            for s in self._clients.values()
+        ]
         self._on_status(
             {
                 "role": "server",
                 "connected": bool(self._clients),
                 "local_ip": get_local_ip(),
-                "remote_ip": ", ".join(clients.values()) if clients else None,
+                "remote_ip": ", ".join(s.host for s in self._clients.values()) or None,
                 "active": f"cliente '{self._active_edge}'" if self._active_edge else "local",
                 "clients": clients,
             }

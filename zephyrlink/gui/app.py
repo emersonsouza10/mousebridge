@@ -21,6 +21,7 @@ from typing import Any
 from zephyrlink.client import ZephyrLinkClient
 from zephyrlink.config import AppConfig
 from zephyrlink.discovery.beacon import get_local_ip
+from zephyrlink.mouse import get_monitors
 from zephyrlink.logging_setup import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -67,11 +68,22 @@ class _CoreThread(threading.Thread):
         if self._core is not None:
             self._core.stop()
 
+    @property
+    def core(self) -> Any:
+        return self._core
+
 
 class ZephyrLinkGUI:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._core_thread: _CoreThread | None = None
+        self._monitors = get_monitors()
+        self._clients_status: list[dict[str, Any]] = []
+        self._client_boxes: list[tuple[int, float, float, float, float]] = []
+        self._edge_zones: dict[str, tuple[float, float, float, float]] = {}
+        self._principal_rect: tuple[float, float, float, float] = (0, 0, 0, 0)
+        self._drag: dict[str, Any] | None = None
+        self._active: str | None = None
         self._status_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._log_queue: queue.Queue[str] = queue.Queue(maxsize=1000)
 
@@ -95,19 +107,14 @@ class ZephyrLinkGUI:
                         value="server").grid(row=0, column=0, sticky="w")
         ttk.Radiobutton(controls, text="Cliente (controlado)", variable=self._role_var,
                         value="client").grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Label(controls, text="Borda:").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self._edge_var = tk.StringVar(value=self._config.layout.edge)
-        ttk.Combobox(controls, textvariable=self._edge_var, state="readonly", width=8,
-                     values=("left", "right", "top", "bottom")).grid(row=1, column=1, sticky="w",
-                                                                     padx=8, pady=(6, 0))
-        ttk.Label(controls, text="IP manual (cliente):").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(controls, text="IP manual (cliente):").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self._host_var = tk.StringVar(value=self._config.network.manual_host or "")
-        ttk.Entry(controls, textvariable=self._host_var, width=18).grid(row=2, column=1, sticky="w",
+        ttk.Entry(controls, textvariable=self._host_var, width=18).grid(row=1, column=1, sticky="w",
                                                                         padx=8, pady=(6, 0))
-        ttk.Label(controls, text="Chave compartilhada:").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(controls, text="Chave compartilhada:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self._key_var = tk.StringVar(value=self._config.security.shared_key)
         ttk.Entry(controls, textvariable=self._key_var, width=18, show="•").grid(
-            row=3, column=1, sticky="w", padx=8, pady=(6, 0))
+            row=2, column=1, sticky="w", padx=8, pady=(6, 0))
         self._start_btn = ttk.Button(controls, text="Iniciar", command=self._on_start)
         self._start_btn.grid(row=0, column=2, rowspan=2, padx=12)
         self._stop_btn = ttk.Button(controls, text="Parar", command=self._on_stop, state=tk.DISABLED)
@@ -129,12 +136,15 @@ class ZephyrLinkGUI:
             ttk.Label(status, textvariable=var).grid(row=i, column=1, sticky="w", padx=8)
         self._status_vars["local_ip"].set(get_local_ip())
 
-        layout_frame = ttk.LabelFrame(main, text="Posição das telas", padding=8)
+        layout_frame = ttk.LabelFrame(main, text="Posição das telas (arraste os clientes)", padding=8)
         layout_frame.pack(fill=tk.X, pady=(8, 0))
-        self._canvas = tk.Canvas(layout_frame, height=110, bg="#1e1e1e", highlightthickness=0)
+        self._canvas = tk.Canvas(layout_frame, height=210, bg="#1e1e1e", highlightthickness=0)
         self._canvas.pack(fill=tk.X)
+        self._canvas.bind("<Button-1>", self._on_canvas_press)
+        self._canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self._canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self._canvas.bind("<Configure>", lambda _e: self._draw_layout())
         self._draw_layout()
-        self._edge_var.trace_add("write", lambda *_: self._draw_layout())
 
         logs = ttk.LabelFrame(main, text="Logs", padding=8)
         logs.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
@@ -143,39 +153,143 @@ class ZephyrLinkGUI:
         self._log_text.pack(fill=tk.BOTH, expand=True)
 
     def _draw_layout(self, active: str | None = None) -> None:
+        active = active if active is not None else self._active
         canvas = self._canvas
         canvas.delete("all")
+        self._client_boxes = []
+        self._edge_zones = {}
         width = max(canvas.winfo_width(), 420)
-        edge = self._edge_var.get()
-        box_w, box_h = 120, 70
-        cx, cy = width // 2, 55
-        gap = 8
-        offsets = {
-            "right": (box_w + gap, 0),
-            "left": (-(box_w + gap), 0),
-            "top": (0, -(box_h // 2 + gap)),
-            "bottom": (0, box_h // 2 + gap),
+        height = max(canvas.winfo_height(), 160)
+        is_server = self._role_var.get() == "server"
+
+        # Caixa que envolve todos os monitores físicos desta máquina.
+        monitors = self._monitors
+        minx = min(m.x for m in monitors)
+        miny = min(m.y for m in monitors)
+        maxx = max(m.right for m in monitors)
+        maxy = max(m.bottom for m in monitors)
+        bw, bh = maxx - minx + 1, maxy - miny + 1
+        prim = next((m for m in monitors if m.x == 0 and m.y == 0), monitors[0])
+
+        # Uma "zona" por borda do servidor, em coordenadas de mundo.
+        gx, gy = max(bw // 12, 1), max(bh // 12, 1)
+        zones = {
+            "right": (maxx + gx, miny, prim.width, bh),
+            "left": (minx - gx - prim.width, miny, prim.width, bh),
+            "top": (minx, miny - gy - prim.height, bw, prim.height),
+            "bottom": (minx, maxy + gy, bw, prim.height),
         }
-        dx, dy = offsets.get(edge, (box_w + gap, 0))
-        if edge in ("top", "bottom"):
-            cy = 55
-            box_h = 42
-        primary_fill = "#3a86ff" if active in (None, "local", "servidor") else "#2a4a6e"
-        secondary_fill = "#3a86ff" if active in ("remoto", "esta máquina") else "#2a4a6e"
-        canvas.create_rectangle(cx - box_w // 2, cy - box_h // 2, cx + box_w // 2, cy + box_h // 2,
-                                fill=primary_fill, outline="#cccccc")
-        canvas.create_text(cx, cy, text="Principal", fill="white")
-        canvas.create_rectangle(cx - box_w // 2 + dx, cy - box_h // 2 + dy,
-                                cx + box_w // 2 + dx, cy + box_h // 2 + dy,
-                                fill=secondary_fill, outline="#cccccc")
-        canvas.create_text(cx + dx, cy + dy, text="Secundário", fill="white")
+
+        # Mundo = monitores + zonas (mantém a escala estável ao arrastar).
+        xs, ys = [minx, maxx], [miny, maxy]
+        if is_server:
+            for ex, ey, ew, eh in zones.values():
+                xs += [ex, ex + ew - 1]
+                ys += [ey, ey + eh - 1]
+        wx0, wy0, wx1, wy1 = min(xs), min(ys), max(xs), max(ys)
+        ww, wh = wx1 - wx0 + 1, wy1 - wy0 + 1
+        pad = 12
+        tray_h = 38 if is_server else 0
+        avail_h = height - tray_h
+        scale = min((width - 2 * pad) / ww, (avail_h - 2 * pad) / wh)
+        ox = (width - ww * scale) / 2 - wx0 * scale
+        oy = (avail_h - wh * scale) / 2 - wy0 * scale
+
+        def to_canvas(x: float, y: float) -> tuple[float, float]:
+            return (ox + x * scale, oy + y * scale)
+
+        def box(x: int, y: int, w: int, h: int, fill: str, text: str,
+                cid: int | None = None) -> None:
+            x0, y0 = to_canvas(x, y)
+            x1, y1 = to_canvas(x + w, y + h)
+            canvas.create_rectangle(x0, y0, x1, y1, fill=fill, outline="#cccccc")
+            canvas.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=text, fill="white",
+                               justify="center", font=("Segoe UI", 8))
+            if cid is not None:
+                self._client_boxes.append((cid, x0, y0, x1, y1))
+
+        self._principal_rect = (*to_canvas(minx, miny), *to_canvas(maxx + 1, maxy + 1))
+        active_edge = active.split("'")[1] if active and "'" in active else None
+        primary_fill = "#3a86ff" if active in (None, "local") else "#2a4a6e"
+        for i, m in enumerate(monitors):
+            tag = "principal" if m is prim else f"monitor {i + 1}"
+            box(m.x, m.y, m.width, m.height, primary_fill, f"{tag}\n{m.width}×{m.height}")
+
+        if not is_server:
+            return
+
+        assigned = {c["edge"]: c for c in self._clients_status if c.get("edge")}
+        for edge, (ex, ey, ew, eh) in zones.items():
+            self._edge_zones[edge] = (*to_canvas(ex, ey), *to_canvas(ex + ew, ey + eh))
+            client = assigned.get(edge)
+            if client is not None:
+                fill = "#3a86ff" if edge == active_edge else "#2a4a6e"
+                box(ex, ey, ew, eh, fill, f"{client['host']}\n({edge})", cid=client["cid"])
+            else:
+                zx0, zy0, zx1, zy1 = self._edge_zones[edge]
+                canvas.create_rectangle(zx0, zy0, zx1, zy1, outline="#555555", dash=(3, 3))
+                canvas.create_text((zx0 + zx1) / 2, (zy0 + zy1) / 2, text=edge,
+                                   fill="#777777", font=("Segoe UI", 8))
+
+        # Bandeja: clientes conectados ainda sem borda (arraste para uma zona).
+        unassigned = [c for c in self._clients_status if not c.get("edge")]
+        ty0, ty1 = height - tray_h + 6, height - 6
+        canvas.create_line(0, height - tray_h, width, height - tray_h, fill="#333333")
+        if unassigned:
+            tx = pad
+            for c in unassigned:
+                tx1 = tx + 130
+                canvas.create_rectangle(tx, ty0, tx1, ty1, fill="#6a4a2a", outline="#cccccc")
+                canvas.create_text((tx + tx1) / 2, (ty0 + ty1) / 2, text=f"{c['host']}\n(sem borda)",
+                                   fill="white", justify="center", font=("Segoe UI", 8))
+                self._client_boxes.append((c["cid"], tx, ty0, tx1, ty1))
+                tx = tx1 + 8
+
+    def _on_canvas_press(self, event: "tk.Event[Any]") -> None:
+        self._drag = None
+        if self._role_var.get() != "server":
+            return
+        for cid, x0, y0, x1, y1 in self._client_boxes:
+            if x0 <= event.x <= x1 and y0 <= event.y <= y1:
+                self._drag = {"cid": cid, "w": x1 - x0, "h": y1 - y0}
+                return
+
+    def _on_canvas_drag(self, event: "tk.Event[Any]") -> None:
+        if self._drag is None:
+            return
+        self._canvas.delete("ghost")
+        w, h = self._drag["w"], self._drag["h"]
+        self._canvas.create_rectangle(event.x - w / 2, event.y - h / 2,
+                                      event.x + w / 2, event.y + h / 2,
+                                      outline="#ffd166", dash=(4, 2), width=2, tags="ghost")
+
+    def _on_canvas_release(self, event: "tk.Event[Any]") -> None:
+        if self._drag is None:
+            return
+        self._canvas.delete("ghost")
+        cid = self._drag["cid"]
+        self._drag = None
+        edge = self._nearest_target(event.x, event.y)
+        core = self._core_thread.core if self._core_thread is not None else None
+        if core is not None and hasattr(core, "assign_edge"):
+            core.assign_edge(cid, edge)
+
+    def _nearest_target(self, x: float, y: float) -> str | None:
+        """Borda (ou None = desencaixar) cujo centro está mais perto do ponto."""
+        def center(r: tuple[float, float, float, float]) -> tuple[float, float]:
+            return ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)
+
+        targets: list[tuple[str | None, tuple[float, float]]] = [
+            (edge, center(rect)) for edge, rect in self._edge_zones.items()
+        ]
+        targets.append((None, center(self._principal_rect)))
+        return min(targets, key=lambda t: (x - t[1][0]) ** 2 + (y - t[1][1]) ** 2)[0]
 
     def _on_start(self) -> None:
         manual = self._host_var.get().strip() or None
         config = replace(
             self._config,
             role=self._role_var.get(),
-            layout=replace(self._config.layout, edge=self._edge_var.get()),
             network=replace(self._config.network, manual_host=manual),
             security=replace(self._config.security, shared_key=self._key_var.get()),
         )
@@ -222,7 +336,9 @@ class ZephyrLinkGUI:
         self._status_vars["local_ip"].set(status.get("local_ip") or "-")
         self._status_vars["remote_ip"].set(status.get("remote_ip") or "-")
         self._status_vars["active"].set(status.get("active") or "-")
-        self._draw_layout(active=status.get("active"))
+        self._clients_status = status.get("clients") or []
+        self._active = status.get("active")
+        self._draw_layout()
 
     def run(self) -> None:
         self._root.mainloop()
