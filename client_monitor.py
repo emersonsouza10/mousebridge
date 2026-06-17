@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Controla a sessão do cliente ZephyrLink: iniciar, logs e parar.
+"""Controla a sessão do cliente ZephyrLink: iniciar, parar e status.
+
+Os logs são exibidos em tempo real no console e não são salvos em disco.
 
 Uso:
     python client_monitor.py iniciar [args extras p/ zephyrlink client]
-    python client_monitor.py logs
     python client_monitor.py parar
     python client_monitor.py status
 """
@@ -19,7 +20,6 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 PID_FILE = BASE / "client.pid"
-LOG_FILE = BASE / "client.log"
 IS_WIN = sys.platform == "win32"
 
 
@@ -51,40 +51,20 @@ def iniciar(extra: list[str]) -> int:
         return 1
 
     cmd = [sys.executable, "-m", "zephyrlink", "client", *extra]
-    log = open(LOG_FILE, "a", buffering=1, encoding="utf-8")
-    kwargs: dict = {"stdout": log, "stderr": subprocess.STDOUT, "cwd": BASE}
-    if IS_WIN:
-        kwargs["creationflags"] = (
-            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
-        )
-    else:
-        kwargs["start_new_session"] = True
-
-    proc = subprocess.Popen(cmd, **kwargs)
+    proc = subprocess.Popen(cmd, cwd=BASE)
     PID_FILE.write_text(str(proc.pid))
-    print(f"Cliente iniciado (PID {proc.pid}). Logs em {LOG_FILE.name}.")
-    return 0
-
-
-def logs() -> int:
-    if not LOG_FILE.exists():
-        print("Sem log ainda. Rode 'iniciar' primeiro.")
-        return 1
-    with open(LOG_FILE, encoding="utf-8", errors="replace") as fh:
-        tail = fh.readlines()[-50:]
-        sys.stdout.write("".join(tail))
-        sys.stdout.flush()
-        print("--- acompanhando (Ctrl+C para sair) ---")
+    print(f"Cliente iniciado (PID {proc.pid}). Ctrl+C para parar.")
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
         try:
-            while True:
-                line = fh.readline()
-                if line:
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
-                else:
-                    time.sleep(0.4)
-        except KeyboardInterrupt:
-            return 0
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        return 0
+    finally:
+        PID_FILE.unlink(missing_ok=True)
 
 
 def parar() -> int:
@@ -126,8 +106,6 @@ def main(argv: list[str]) -> int:
     match action:
         case "iniciar" | "start":
             return iniciar(extra)
-        case "logs" | "log":
-            return logs()
         case "parar" | "stop":
             return parar()
         case "status":
