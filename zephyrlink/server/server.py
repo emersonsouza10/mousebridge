@@ -498,6 +498,14 @@ class ZephyrLinkServer:
                 return cid
         return None
 
+    def _control_list(self, target: str) -> dict[str, Any]:
+        clients = [
+            {"host": s.host, "edge": s.edge, "apps": s.catalog}
+            for s in self._clients.values()
+            if not target or target in (s.host, s.edge)
+        ]
+        return {"clients": clients}
+
     async def _control_launch(self, target: str, app_id: str, args: list[str]) -> dict[str, Any]:
         cid = self._resolve_target(target)
         if cid is None:
@@ -536,13 +544,16 @@ class ZephyrLinkServer:
                 return
             await stream.send(Message(MsgType.AUTH_OK, {}))
             request = await asyncio.wait_for(stream.receive(), timeout=10.0)
-            if request.type != MsgType.CTRL_LAUNCH:
+            if request.type == MsgType.CTRL_LAUNCH:
+                result = await self._control_launch(
+                    str(request.data.get("client", "")),
+                    str(request.data.get("app", "")),
+                    list(request.data.get("args") or []),
+                )
+            elif request.type == MsgType.CTRL_LIST:
+                result = self._control_list(str(request.data.get("client", "")))
+            else:
                 return
-            result = await self._control_launch(
-                str(request.data.get("client", "")),
-                str(request.data.get("app", "")),
-                list(request.data.get("args") or []),
-            )
             await stream.send(Message(MsgType.CTRL_REPLY, result))
         except (ConnectionError, asyncio.IncompleteReadError, OSError, asyncio.TimeoutError):
             pass

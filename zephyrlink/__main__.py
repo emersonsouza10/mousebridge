@@ -44,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument("--app", required=True, help="id do app no catálogo do cliente")
     launch.add_argument("--arg", action="append", default=[], dest="arg",
                         help="parâmetro do app (repita para vários)")
+
+    apps = sub.add_parser("apps", parents=[common],
+                          help="lista os apps publicados pelos clientes (fala com o servidor local)")
+    apps.add_argument("--client", default=None, help="filtra por IP ou borda (opcional)")
     return parser
 
 
@@ -85,6 +89,12 @@ def main(argv: list[str] | None = None) -> int:
 
         setup_logging(config.log_level, config.log_json)
         return run_launch_cli(config, args.client, args.app, args.arg)
+
+    if args.command == "apps":
+        from zephyrlink.control import run_apps_cli
+
+        setup_logging(config.log_level, config.log_json)
+        return run_apps_cli(config, args.client)
 
     setup_logging(config.log_level, config.log_json)
     if config.security.shared_key == "change-me":
