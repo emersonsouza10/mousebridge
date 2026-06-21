@@ -43,6 +43,16 @@ class LauncherConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             build_config({"launcher": {"apps": [{"id": "a", "command": []}]}})
 
+    def test_rejects_empty_executable(self) -> None:
+        with self.assertRaises(ConfigError):
+            build_config({"launcher": {"apps": [{"id": "a", "command": ["", "x"]}]}})
+
+    def test_allows_empty_arg_after_executable(self) -> None:
+        config = build_config({"launcher": {"apps": [
+            {"id": "a", "command": ["cmd", "/c", "start", ""]},
+        ]}})
+        self.assertEqual(config.launcher.apps[0].command, ("cmd", "/c", "start", ""))
+
     def test_rejects_duplicate_id(self) -> None:
         with self.assertRaises(ConfigError):
             build_config({"launcher": {"apps": [

@@ -141,8 +141,10 @@ def _build_launcher(raw: dict[str, Any]) -> LauncherConfig:
         command = entry.get("command")
         if isinstance(command, str):
             command = [command]
-        if not isinstance(command, list) or not command or not all(command):
+        if not isinstance(command, list) or not command:
             raise ConfigError(f"launcher.apps[{app_id}].command deve ser lista não vazia")
+        if command[0] is None or not str(command[0]).strip():
+            raise ConfigError(f"launcher.apps[{app_id}].command: o executável (1º item) não pode ser vazio")
         platform = entry.get("platform")
         if platform is not None and str(platform).lower() not in VALID_PLATFORMS:
             raise ConfigError(
