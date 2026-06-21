@@ -107,7 +107,8 @@ zephyrlink gui
 
 Escolha o papel (servidor/cliente), a borda e opcionalmente o IP manual, e clique em
 **Iniciar**. A janela mostra conexão, IPs, computador ativo, o diagrama das telas e os
-logs ao vivo.
+logs ao vivo. Ao clicar em **Iniciar**, o papel, o IP manual e a chave compartilhada
+são gravados em `./config.yaml` e voltam **pré-preenchidos** na próxima abertura.
 
 ### Abertura remota de aplicações
 
