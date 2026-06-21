@@ -38,6 +38,7 @@ from zephyrlink.config import AppConfig
 from zephyrlink.config.settings import VALID_EDGES
 from zephyrlink.discovery import DiscoveryResponder
 from zephyrlink.discovery.beacon import get_local_ip
+from zephyrlink.launcher.catalog import resolve_app_ref
 from zephyrlink.mouse import EdgeDetector, ScreenInfo, get_virtual_screen, return_position
 from zephyrlink.transport import Message, MessageStream, MsgType, coalesce_moves
 from zephyrlink.transport.security import (
@@ -510,6 +511,10 @@ class ZephyrLinkServer:
         cid = self._resolve_target(target)
         if cid is None:
             return {"ok": False, "error": f"cliente '{target}' não está conectado"}
+        session = self._clients.get(cid)
+        if session is None:
+            return {"ok": False, "error": "cliente indisponível"}
+        app_id = resolve_app_ref(session.catalog, app_id)
         req_id = self._start_launch(cid, app_id, args)
         if req_id is None:
             return {"ok": False, "error": "cliente indisponível"}

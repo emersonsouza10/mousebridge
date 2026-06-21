@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     launch = sub.add_parser("launch", parents=[common],
                             help="dispara a abertura de um app num cliente (fala com o servidor local)")
     launch.add_argument("--client", required=True, help="IP ou borda do cliente alvo")
-    launch.add_argument("--app", required=True, help="id do app no catálogo do cliente")
+    launch.add_argument("--app", required=True, help="id ou label do app no catálogo do cliente")
     launch.add_argument("--arg", action="append", default=[], dest="arg",
                         help="parâmetro do app (repita para vários)")
 

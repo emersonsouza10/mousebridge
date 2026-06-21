@@ -13,6 +13,26 @@ from zephyrlink.config import LaunchableApp, LauncherConfig
 from zephyrlink.transport import Message, MsgType
 
 
+def resolve_app_ref(catalog: list[dict], ref: str) -> str:
+    """Resolve uma referência de app (``id`` ou ``label``) para o ``id``.
+
+    Usado no servidor para que ``launch --app`` aceite o nome amigável. Casa
+    primeiro por ``id`` exato, depois por ``label`` exato e por fim por
+    ``label`` ignorando maiúsculas. Não resolvido devolve ``ref`` como veio —
+    o cliente recusa se não existir."""
+    ids = {a.get("id") for a in catalog}
+    if ref in ids:
+        return ref
+    for app in catalog:
+        if app.get("label") == ref:
+            return str(app["id"])
+    lowered = ref.lower()
+    for app in catalog:
+        if str(app.get("label", "")).lower() == lowered:
+            return str(app["id"])
+    return ref
+
+
 def current_platform() -> str:
     if sys.platform.startswith("win"):
         return "windows"
