@@ -2,7 +2,12 @@ import unittest
 
 from zephyrlink.mouse.cursor import hide_pointer, show_pointer
 from zephyrlink.mouse.edge import EdgeDetector, entry_position, opposite_edge
-from zephyrlink.mouse.screen import ScreenInfo, enable_dpi_awareness, primary_center
+from zephyrlink.mouse.screen import (
+    MonitorLayout,
+    ScreenInfo,
+    enable_dpi_awareness,
+    primary_center,
+)
 
 FHD = ScreenInfo(0, 0, 1920, 1080)
 UHD = ScreenInfo(0, 0, 3840, 2160)
@@ -130,6 +135,51 @@ class MultiEdgeSelectionTest(unittest.TestCase):
 
     def test_untracked_border_selects_nothing(self) -> None:
         self.assertIsNone(self._first_hit(0, 400))
+
+
+class MonitorLayoutTest(unittest.TestCase):
+    """Cliente com dois monitores lado a lado, o secundário (direito)
+    deslocado verticalmente — cria uma zona morta entre eles. Servidor à
+    esquerda, então a borda de retorno é 'left'."""
+
+    def setUp(self) -> None:
+        self.left = ScreenInfo(0, 0, 1920, 1080)       # principal: y 0..1079
+        self.right = ScreenInfo(1920, -200, 1920, 1080)  # secundário: y -200..879
+        self.layout = MonitorLayout((self.left, self.right))
+
+    def test_bounds_is_bounding_box(self) -> None:
+        self.assertEqual(self.layout.bounds, ScreenInfo(0, -200, 3840, 1280))
+
+    def test_monitor_at_picks_physical_monitor(self) -> None:
+        self.assertEqual(self.layout.monitor_at(100, 500), self.left)
+        self.assertEqual(self.layout.monitor_at(2000, -100), self.right)
+
+    def test_dead_zone_belongs_to_no_monitor(self) -> None:
+        # Abaixo do monitor direito, fora do esquerdo (à direita dele).
+        self.assertIsNone(self.layout.monitor_at(2000, 1000))
+
+    def test_return_triggers_on_secondary_inner_edge(self) -> None:
+        # Cursor no monitor secundário, numa linha que o principal não cobre:
+        # empurrar para a esquerda sai da área de trabalho -> overflow negativo.
+        over_x, _ = self.layout.band_overflow(1900, -100)
+        self.assertLess(over_x, 0)
+
+    def test_no_return_when_crossing_between_monitors(self) -> None:
+        # Mesma coluna, mas numa linha coberta pelos dois: é travessia
+        # interna, não saída -> sem overflow (o cursor desliza ao vizinho).
+        self.assertEqual(self.layout.band_overflow(1900, 500), (0, 0))
+
+    def test_clamp_snaps_dead_zone_to_nearest_monitor(self) -> None:
+        self.assertEqual(self.layout.clamp(1950, 1000), (1919, 1000))
+
+    def test_clamp_keeps_valid_point(self) -> None:
+        self.assertEqual(self.layout.clamp(100, 500), (100, 500))
+
+    def test_single_monitor_matches_screen(self) -> None:
+        layout = MonitorLayout((FHD,))
+        self.assertEqual(layout.bounds, FHD)
+        self.assertEqual(layout.band_overflow(-5, 500), (-5, 0))
+        self.assertEqual(layout.band_overflow(500, 500), (0, 0))
 
 
 class PlatformHelpersTest(unittest.TestCase):
