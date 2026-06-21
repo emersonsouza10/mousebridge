@@ -53,6 +53,76 @@ class ScreenInfo:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class MonitorLayout:
+    """Conjunto de monitores físicos do desktop, com geometria ciente das
+    *zonas mortas* entre eles.
+
+    A tela virtual (caixa delimitadora) inclui regiões que não pertencem a
+    nenhum monitor quando os monitores têm tamanhos ou alinhamentos
+    diferentes. Mover o cursor dentro dessas regiões não é possível: o SO o
+    prende no monitor real mais próximo. Tratar o desktop como o retângulo
+    virtual faz o cursor "encalhar" perto da junção dos monitores e nunca
+    estourar a borda externa — por isso o retorno ao servidor não dispara.
+    """
+
+    monitors: tuple[ScreenInfo, ...]
+
+    @classmethod
+    def detect(cls) -> "MonitorLayout":
+        return cls(tuple(get_monitors()))
+
+    @property
+    def bounds(self) -> ScreenInfo:
+        """Caixa delimitadora (tela virtual) de todos os monitores."""
+        left = min(m.x for m in self.monitors)
+        top = min(m.y for m in self.monitors)
+        right = max(m.right for m in self.monitors)
+        bottom = max(m.bottom for m in self.monitors)
+        return ScreenInfo(left, top, right - left + 1, bottom - top + 1)
+
+    def monitor_at(self, x: int, y: int) -> ScreenInfo | None:
+        for m in self.monitors:
+            if m.x <= x <= m.right and m.y <= y <= m.bottom:
+                return m
+        return None
+
+    def clamp(self, x: int, y: int) -> tuple[int, int]:
+        """Prende ``(x, y)`` ao pixel válido mais próximo de algum monitor."""
+        if self.monitor_at(x, y) is not None:
+            return (x, y)
+        best: tuple[int, int] | None = None
+        best_dist = float("inf")
+        for m in self.monitors:
+            cx, cy = m.clamp(x, y)
+            dist = (cx - x) ** 2 + (cy - y) ** 2
+            if dist < best_dist:
+                best_dist, best = dist, (cx, cy)
+        assert best is not None
+        return best
+
+    def band_overflow(self, x: int, y: int) -> tuple[int, int]:
+        """Quanto ``(x, y)`` extrapola a área de trabalho em cada eixo.
+
+        A medição é feita contra os monitores que cobrem a faixa ortogonal
+        (a linha ``y`` para o eixo X, a coluna ``x`` para o eixo Y). Assim
+        uma zona morta *entre* monitores devolve ``0`` (não é saída — o
+        cursor apenas desliza para o monitor vizinho), enquanto sair pela
+        borda externa devolve o transbordo com sinal (negativo à
+        esquerda/acima, positivo à direita/abaixo).
+        """
+        rows = [m for m in self.monitors if m.y <= y <= m.bottom] or list(self.monitors)
+        left = min(m.x for m in rows)
+        right = max(m.right for m in rows)
+        over_x = x - left if x < left else (x - right if x > right else 0)
+
+        cols = [m for m in self.monitors if m.x <= x <= m.right] or list(self.monitors)
+        top = min(m.y for m in cols)
+        bottom = max(m.bottom for m in cols)
+        over_y = y - top if y < top else (y - bottom if y > bottom else 0)
+        return over_x, over_y
+
+
 def enable_dpi_awareness() -> None:
     """Declara o processo *per-monitor DPI aware* (Windows).
 

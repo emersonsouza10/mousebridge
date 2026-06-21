@@ -11,33 +11,42 @@ import logging
 from pynput import mouse
 
 from zephyrlink.mouse.capture import NAME_TO_BUTTON
-from zephyrlink.mouse.screen import ScreenInfo
+from zephyrlink.mouse.screen import MonitorLayout
 
 logger = logging.getLogger(__name__)
 
 
 class MouseInjector:
-    def __init__(self, screen: ScreenInfo) -> None:
-        self._screen = screen
+    def __init__(self, layout: MonitorLayout) -> None:
+        self._layout = layout
         self._controller = mouse.Controller()
 
+    def set_layout(self, layout: MonitorLayout) -> None:
+        self._layout = layout
+
     def set_position(self, x: int, y: int) -> None:
-        self._controller.position = self._screen.clamp(x, y)
+        self._controller.position = self._layout.clamp(x, y)
 
     def position(self) -> tuple[int, int]:
         return self._controller.position
 
     def move_by(self, dx: int, dy: int) -> tuple[int, int, int, int]:
-        """Move o cursor pelo delta, limitado à tela.
+        """Move o cursor pelo delta, limitado aos monitores físicos.
 
-        Retorna ``(x, y, overflow_x, overflow_y)`` — o overflow indica
-        quanto do movimento passou da borda (usado na detecção de retorno).
+        Retorna ``(x, y, overflow_x, overflow_y)``. O overflow é diferente
+        de zero apenas quando o movimento sai da área de trabalho pela borda
+        externa (usado na detecção de retorno); uma zona morta *entre*
+        monitores devolve overflow zero e o cursor desliza para o vizinho.
         """
         cur_x, cur_y = self._controller.position
         target_x, target_y = int(cur_x) + dx, int(cur_y) + dy
-        new_x, new_y = self._screen.clamp(target_x, target_y)
+        if self._layout.monitor_at(target_x, target_y) is not None:
+            self._controller.position = (target_x, target_y)
+            return target_x, target_y, 0, 0
+        over_x, over_y = self._layout.band_overflow(target_x, target_y)
+        new_x, new_y = self._layout.clamp(target_x, target_y)
         self._controller.position = (new_x, new_y)
-        return new_x, new_y, target_x - new_x, target_y - new_y
+        return new_x, new_y, over_x, over_y
 
     def button(self, name: str, pressed: bool) -> None:
         btn = NAME_TO_BUTTON.get(name)
