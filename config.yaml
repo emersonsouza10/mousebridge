@@ -9,6 +9,7 @@ log_json: false         # true => logs em JSON estruturado
 network:
   tcp_port: 50510
   discovery_port: 50511
+  control_port: 50512   # canal de controle local (127.0.0.1) p/ o comando 'launch'
   manual_host: null     # IP do servidor; null => descoberta automática (cliente)
   heartbeat_interval: 2.0
   heartbeat_timeout: 8.0
