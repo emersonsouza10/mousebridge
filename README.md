@@ -116,7 +116,14 @@ calculadora, executáveis corporativos). O modelo é **fechado por construção*
 decide o que pode ser aberto é o **cliente** (a máquina-alvo), não o operador. O
 servidor envia apenas um `id`; o comando real nunca trafega.
 
-Cadastre no `config.yaml` **do cliente** (desligado por padrão):
+**Pela GUI (mais simples):** rode `zephyrlink gui` na máquina-alvo e clique em
+**"Apps permitidos…"**. O editor lista os apps, permite adicionar/editar/remover e,
+no cadastro, oferece o atalho **"Site"** (informe a URL e o navegador) ou
+**"Aplicativo"** (escolha o `.exe`). Ao salvar, ele grava em `./config.yaml` e liga o
+launcher. O cliente carrega `./config.yaml` automaticamente (sem precisar de `-c`), então
+a mesma lista vale para o cliente headless via `pythonw`.
+
+**Pelo arquivo:** ou edite o `config.yaml` **do cliente** direto (desligado por padrão):
 
 ```yaml
 launcher:

@@ -85,8 +85,9 @@ class _CoreThread(threading.Thread):
 
 
 class ZephyrLinkGUI:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, config_path: str = "config.yaml") -> None:
         self._config = config
+        self._config_path = config_path
         self._core_thread: _CoreThread | None = None
         self._monitors = get_monitors()
         self._clients_status: list[dict[str, Any]] = []
@@ -134,6 +135,8 @@ class ZephyrLinkGUI:
         self._start_btn.grid(row=0, column=2, rowspan=2, padx=12)
         self._stop_btn = ttk.Button(controls, text="Parar", command=self._on_stop, state=tk.DISABLED)
         self._stop_btn.grid(row=2, column=2, padx=12)
+        ttk.Button(controls, text="Apps permitidos…", command=self._open_app_editor).grid(
+            row=0, column=3, rowspan=3, padx=(16, 0))
 
         status = ttk.LabelFrame(main, text="Status", padding=8)
         status.pack(fill=tk.X, pady=(8, 0))
@@ -430,6 +433,23 @@ class ZephyrLinkGUI:
             self._history.insert("", "end", values=(hora, rec.get("host", "-"),
                                                      rec.get("label", "-"), estado))
 
+    def _open_app_editor(self) -> None:
+        from zephyrlink.gui.launcher_editor import LauncherEditor
+
+        apps = [
+            {"id": a.id, "label": a.label, "command": list(a.command), "platform": a.platform}
+            for a in self._config.launcher.apps
+        ]
+        LauncherEditor(self._root, self._config_path, apps, self._reload_config)
+
+    def _reload_config(self) -> None:
+        from zephyrlink.config import ConfigError, load_config
+
+        try:
+            self._config = load_config(self._config_path)
+        except ConfigError:
+            logger.exception("Falha ao recarregar %s", self._config_path)
+
     def _on_launch(self) -> None:
         core = self._core_thread.core if self._core_thread is not None else None
         cid = self._client_cid.get(self._app_client_var.get())
@@ -443,6 +463,6 @@ class ZephyrLinkGUI:
         self._root.mainloop()
 
 
-def run_gui(config: AppConfig) -> None:
+def run_gui(config: AppConfig, config_path: str = "config.yaml") -> None:
     setup_logging(config.log_level, config.log_json)
-    ZephyrLinkGUI(config).run()
+    ZephyrLinkGUI(config, config_path).run()
