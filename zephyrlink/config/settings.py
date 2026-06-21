@@ -30,6 +30,7 @@ class ConfigError(Exception):
 class NetworkConfig:
     tcp_port: int = 50510
     discovery_port: int = 50511
+    control_port: int = 50512
     manual_host: str | None = None
     heartbeat_interval: float = 2.0
     heartbeat_timeout: float = 8.0
@@ -214,6 +215,7 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
         network=NetworkConfig(
             tcp_port=int(net.get("tcp_port", 50510)),
             discovery_port=int(net.get("discovery_port", 50511)),
+            control_port=int(net.get("control_port", 50512)),
             manual_host=net.get("manual_host"),
             heartbeat_interval=float(net.get("heartbeat_interval", 2.0)),
             heartbeat_timeout=float(net.get("heartbeat_timeout", 8.0)),
@@ -251,6 +253,8 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
         raise ConfigError(f"network.tcp_port fora do intervalo: {config.network.tcp_port}")
     if not (0 < config.network.discovery_port < 65536):
         raise ConfigError(f"network.discovery_port fora do intervalo: {config.network.discovery_port}")
+    if not (0 < config.network.control_port < 65536):
+        raise ConfigError(f"network.control_port fora do intervalo: {config.network.control_port}")
     if config.network.heartbeat_timeout <= config.network.heartbeat_interval:
         raise ConfigError("network.heartbeat_timeout deve ser maior que heartbeat_interval")
     if config.security.use_tls and not (config.security.tls_cert and config.security.tls_key):

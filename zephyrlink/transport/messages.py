@@ -35,6 +35,8 @@ class MsgType(StrEnum):
     LAUNCH_REQUEST = "launch_request"
     LAUNCH_ACK = "launch_ack"
     LAUNCH_RESULT = "launch_result"
+    CTRL_LAUNCH = "ctrl_launch"
+    CTRL_REPLY = "ctrl_reply"
     PING = "ping"
     PONG = "pong"
 

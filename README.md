@@ -152,6 +152,19 @@ publicou, oferece um campo de **parâmetro** (habilitado só para apps que aceit
 dispara a abertura e mostra o histórico com o estado de cada pedido
 (Enviado → Recebido → Executando → Concluído / Falhou).
 
+**Por linha de comando:** com o servidor já rodando (GUI ou headless), dispare a
+abertura sem a GUI pelo subcomando `launch`, que fala com o servidor pelo canal de
+controle local (`127.0.0.1`, autenticado pela mesma chave):
+
+```bash
+# identifica o cliente por IP ou por borda
+zephyrlink launch --client 192.168.10.121 --app dashboard-rtc
+zephyrlink launch --client bottom --app navegador --arg https://intranet.empresa.com
+```
+
+O comando aguarda o resultado e sai com código 0 em sucesso (ou imprime o motivo da
+falha) — pronto para usar em um `.bat`/atalho.
+
 Garantias do modelo: o **parâmetro é validado no cliente** conforme o `arg_kind`
 (esquema/host de URL, caminho contido em `allowed_dirs`, ou valor de uma lista
 `enum_values`); apps com `require_confirm` exigem aprovação na própria máquina-alvo;

@@ -37,6 +37,13 @@ def build_parser() -> argparse.ArgumentParser:
                              "(right=à direita, left=à esquerda, top=acima, bottom=abaixo)")
 
     sub.add_parser("gui", parents=[common], help="interface gráfica")
+
+    launch = sub.add_parser("launch", parents=[common],
+                            help="dispara a abertura de um app num cliente (fala com o servidor local)")
+    launch.add_argument("--client", required=True, help="IP ou borda do cliente alvo")
+    launch.add_argument("--app", required=True, help="id do app no catálogo do cliente")
+    launch.add_argument("--arg", action="append", default=[], dest="arg",
+                        help="parâmetro do app (repita para vários)")
     return parser
 
 
@@ -72,6 +79,12 @@ def main(argv: list[str] | None = None) -> int:
 
         run_gui(config, config_path or "config.yaml")
         return 0
+
+    if args.command == "launch":
+        from zephyrlink.control import run_launch_cli
+
+        setup_logging(config.log_level, config.log_json)
+        return run_launch_cli(config, args.client, args.app, args.arg)
 
     setup_logging(config.log_level, config.log_json)
     if config.security.shared_key == "change-me":

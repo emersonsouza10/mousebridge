@@ -86,6 +86,7 @@ class ZephyrLinkServer:
         self._keyboard_capture: Any = None
         self._clipboard = ClipboardSync(config.clipboard)
         self._launches: dict[str, dict[str, Any]] = {}
+        self._launch_waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._stopping = asyncio.Event()
 
     async def run(self) -> None:
@@ -117,6 +118,15 @@ class ZephyrLinkServer:
             self._screen.width,
             self._screen.height,
         )
+        control = await asyncio.start_server(
+            self._handle_control,
+            host="127.0.0.1",
+            port=self._config.network.control_port,
+        )
+        logger.info(
+            "Canal de controle local em 127.0.0.1:%d (use 'zephyrlink launch')",
+            self._config.network.control_port,
+        )
         sender = asyncio.create_task(self._sender_loop(), name="sender")
         self._clipboard.start(self._on_local_clipboard, self._on_local_files)
         self._emit_status()
@@ -126,6 +136,7 @@ class ZephyrLinkServer:
         finally:
             sender.cancel()
             server.close()
+            control.close()
             discovery.close()
             self._clipboard.stop()
             for cid in list(self._clients):
@@ -416,10 +427,10 @@ class ZephyrLinkServer:
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._start_launch, cid, app_id, list(args or []))
 
-    def _start_launch(self, cid: int, app_id: str, args: list[str]) -> None:
+    def _start_launch(self, cid: int, app_id: str, args: list[str]) -> str | None:
         session = self._clients.get(cid)
         if session is None:
-            return
+            return None
         label = next((a["label"] for a in session.catalog if a.get("id") == app_id), app_id)
         req_id = secrets.token_hex(4)
         record = {
@@ -433,6 +444,7 @@ class ZephyrLinkServer:
         logger.info("Launch solicitado: %s em %s (req %s)", app_id, session.host, req_id)
         asyncio.create_task(self._send_launch(session, req_id, app_id, args))
         self._emit_status()
+        return req_id
 
     async def _send_launch(
         self, session: ClientSession, req_id: str, app_id: str, args: list[str]
@@ -468,12 +480,74 @@ class ZephyrLinkServer:
             str(data.get("req_id", "")), state=state, pid=data.get("pid"), error=data.get("error")
         )
 
+    _TERMINAL_STATES = frozenset({"completed", "failed", "rejected", "timeout"})
+
     def _set_launch(self, req_id: str, **fields: Any) -> None:
         record = self._launches.get(req_id)
         if record is None:
             return
         record.update(fields)
+        waiter = self._launch_waiters.get(req_id)
+        if waiter is not None and not waiter.done() and record["state"] in self._TERMINAL_STATES:
+            waiter.set_result(dict(record))
         self._emit_status()
+
+    def _resolve_target(self, target: str) -> int | None:
+        for cid, session in self._clients.items():
+            if target in (session.host, session.edge):
+                return cid
+        return None
+
+    async def _control_launch(self, target: str, app_id: str, args: list[str]) -> dict[str, Any]:
+        cid = self._resolve_target(target)
+        if cid is None:
+            return {"ok": False, "error": f"cliente '{target}' não está conectado"}
+        req_id = self._start_launch(cid, app_id, args)
+        if req_id is None:
+            return {"ok": False, "error": "cliente indisponível"}
+        assert self._loop is not None
+        waiter: asyncio.Future[dict[str, Any]] = self._loop.create_future()
+        self._launch_waiters[req_id] = waiter
+        try:
+            record = await asyncio.wait_for(waiter, timeout=15.0)
+        except asyncio.TimeoutError:
+            record = self._launches.get(req_id) or {"state": "timeout"}
+        finally:
+            self._launch_waiters.pop(req_id, None)
+        return {
+            "ok": record.get("state") == "completed",
+            "state": record.get("state"),
+            "error": record.get("error"),
+            "pid": record.get("pid"),
+        }
+
+    async def _handle_control(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        stream = MessageStream(reader, writer)
+        try:
+            nonce = make_challenge()
+            await stream.send(Message(MsgType.AUTH_CHALLENGE, {"nonce": nonce}))
+            response = await asyncio.wait_for(stream.receive(), timeout=10.0)
+            if response.type != MsgType.AUTH_RESPONSE or not verify_challenge(
+                self._config.security.shared_key, nonce, str(response.data.get("digest", ""))
+            ):
+                await stream.send(Message(MsgType.AUTH_FAIL, {"reason": "chave inválida"}))
+                return
+            await stream.send(Message(MsgType.AUTH_OK, {}))
+            request = await asyncio.wait_for(stream.receive(), timeout=10.0)
+            if request.type != MsgType.CTRL_LAUNCH:
+                return
+            result = await self._control_launch(
+                str(request.data.get("client", "")),
+                str(request.data.get("app", "")),
+                list(request.data.get("args") or []),
+            )
+            await stream.send(Message(MsgType.CTRL_REPLY, result))
+        except (ConnectionError, asyncio.IncompleteReadError, OSError, asyncio.TimeoutError):
+            pass
+        finally:
+            await stream.close()
 
     def _emit_status(self) -> None:
         if self._on_status is None:

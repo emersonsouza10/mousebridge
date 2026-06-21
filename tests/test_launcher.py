@@ -197,6 +197,38 @@ class IntegrityTest(unittest.TestCase):
         self.assertEqual(config.launcher.apps[0].sha256, "ab" * 32)
 
 
+class ControlConfigTest(unittest.TestCase):
+    def test_control_port_default(self) -> None:
+        self.assertEqual(build_config({}).network.control_port, 50512)
+
+    def test_control_port_override_and_validation(self) -> None:
+        self.assertEqual(
+            build_config({"network": {"control_port": 51000}}).network.control_port, 51000
+        )
+        with self.assertRaises(ConfigError):
+            build_config({"network": {"control_port": 70000}})
+
+
+class LaunchCommandParserTest(unittest.TestCase):
+    def test_parses_launch_subcommand(self) -> None:
+        from zephyrlink.__main__ import build_parser
+
+        args = build_parser().parse_args(
+            ["launch", "--client", "192.168.10.121", "--app", "navegador",
+             "--arg", "https://x.empresa.com"]
+        )
+        self.assertEqual(args.command, "launch")
+        self.assertEqual(args.client, "192.168.10.121")
+        self.assertEqual(args.app, "navegador")
+        self.assertEqual(args.arg, ["https://x.empresa.com"])
+
+    def test_launch_requires_client_and_app(self) -> None:
+        from zephyrlink.__main__ import build_parser
+
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["launch", "--app", "navegador"])
+
+
 class PersistTest(unittest.TestCase):
     def test_round_trip_preserves_other_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
