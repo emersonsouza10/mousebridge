@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from zephyrlink.config import ConfigError, LaunchableApp, LauncherConfig
+from zephyrlink.config import ConfigError, LaunchableApp, LauncherConfig, load_config
+from zephyrlink.config.persist import save_launcher
 from zephyrlink.config.settings import build_config
 from zephyrlink.launcher.audit import AuditLog
 from zephyrlink.launcher.catalog import AppCatalog, current_platform
@@ -184,6 +185,33 @@ class IntegrityTest(unittest.TestCase):
             {"id": "a", "command": ["x"], "sha256": "AB" * 32},
         ]}})
         self.assertEqual(config.launcher.apps[0].sha256, "ab" * 32)
+
+
+class PersistTest(unittest.TestCase):
+    def test_round_trip_preserves_other_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            path.write_text("role: client\nsecurity:\n  shared_key: segredo\n", encoding="utf-8")
+            apps = [
+                {"id": "notepad", "label": "Bloco", "command": ["notepad.exe"], "platform": "windows"},
+                {"id": "dash", "label": "Dash", "command": ["firefox.exe", "https://x/#a&b"],
+                 "platform": None},
+            ]
+            save_launcher(str(path), enabled=True, apps=apps)
+            config = load_config(str(path))
+            self.assertEqual(config.security.shared_key, "segredo")
+            self.assertTrue(config.launcher.enabled)
+            self.assertEqual(len(config.launcher.apps), 2)
+            self.assertEqual(config.launcher.apps[1].command, ("firefox.exe", "https://x/#a&b"))
+
+    def test_creates_file_when_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            save_launcher(str(path), enabled=True, apps=[
+                {"id": "a", "label": "A", "command": ["x"]},
+            ])
+            self.assertTrue(path.exists())
+            self.assertEqual(load_config(str(path)).launcher.apps[0].id, "a")
 
 
 class AuditTest(unittest.TestCase):

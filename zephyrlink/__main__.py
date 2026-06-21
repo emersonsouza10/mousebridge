@@ -7,6 +7,7 @@ import asyncio
 import logging
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 from zephyrlink import __version__
 from zephyrlink.config import ConfigError, load_config
@@ -45,8 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     from zephyrlink.mouse import enable_dpi_awareness
 
     enable_dpi_awareness()
+    config_path = args.config
+    if config_path is None and Path("config.yaml").exists():
+        config_path = "config.yaml"
     try:
-        config = load_config(args.config)
+        config = load_config(config_path)
     except ConfigError as exc:
         print(f"Erro de configuração: {exc}", file=sys.stderr)
         return 2
@@ -66,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "gui":
         from zephyrlink.gui import run_gui
 
-        run_gui(config)
+        run_gui(config, config_path or "config.yaml")
         return 0
 
     setup_logging(config.log_level, config.log_json)
