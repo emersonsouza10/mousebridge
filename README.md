@@ -163,6 +163,14 @@ zephyrlink launch --client 192.168.10.121 --app dashboard-rtc
 zephyrlink launch --client bottom --app navegador --arg https://intranet.empresa.com
 ```
 
+Para ver os `id` disponíveis (o `--app` usa o **id**, não o label), liste o catálogo
+publicado pelos clientes:
+
+```bash
+zephyrlink apps                          # todos os clientes
+zephyrlink apps --client 192.168.10.121  # só um cliente
+```
+
 O comando aguarda o resultado e sai com código 0 em sucesso (ou imprime o motivo da
 falha) — pronto para usar em um `.bat`/atalho.
 

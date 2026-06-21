@@ -228,6 +228,20 @@ class LaunchCommandParserTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["launch", "--app", "navegador"])
 
+    def test_parses_apps_subcommand(self) -> None:
+        from zephyrlink.__main__ import build_parser
+
+        args = build_parser().parse_args(["apps", "--client", "bottom"])
+        self.assertEqual(args.command, "apps")
+        self.assertEqual(args.client, "bottom")
+
+    def test_apps_client_is_optional(self) -> None:
+        from zephyrlink.__main__ import build_parser
+
+        args = build_parser().parse_args(["apps"])
+        self.assertEqual(args.command, "apps")
+        self.assertIsNone(args.client)
+
 
 class PersistTest(unittest.TestCase):
     def test_round_trip_preserves_other_sections(self) -> None:
