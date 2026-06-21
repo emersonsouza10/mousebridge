@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
@@ -23,7 +25,18 @@ from zephyrlink.config import AppConfig
 from zephyrlink.discovery import discover_server
 from zephyrlink.discovery.beacon import get_local_ip
 from zephyrlink.keyboard.layout import activate_layout
-from zephyrlink.mouse import ScreenInfo, entry_position, get_virtual_screen, opposite_edge
+from zephyrlink.launcher import (
+    AppCatalog,
+    ArgError,
+    AuditLog,
+    IntegrityError,
+    LaunchError,
+    confirm,
+    launch,
+    validate_args,
+    verify_executable,
+)
+from zephyrlink.mouse import MonitorLayout, ScreenInfo, entry_position, opposite_edge
 from zephyrlink.transport import Message, MessageStream, MsgType
 from zephyrlink.transport.security import build_client_ssl_context, sign_challenge
 
@@ -31,15 +44,22 @@ logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[dict[str, Any]], None]
 
+LAUNCH_FRESHNESS_S = 30.0
+
 
 class ZephyrLinkClient:
     def __init__(self, config: AppConfig, on_status: StatusCallback | None = None) -> None:
         self._config = config
         self._on_status = on_status
+        self._layout: MonitorLayout | None = None
         self._screen: ScreenInfo | None = None
         self._mouse: Any = None
         self._keyboard: Any = None
         self._clipboard = ClipboardSync(config.clipboard)
+        self._catalog = AppCatalog.from_config(config.launcher)
+        self._audit_log = AuditLog(config.launcher.audit_file)
+        self._seen_reqs: deque[str] = deque(maxlen=512)
+        self._launch_times: deque[float] = deque()
         self._stream: MessageStream | None = None
         self._active = False
         self._return_edge: str | None = None
@@ -50,10 +70,14 @@ class ZephyrLinkClient:
         from zephyrlink.keyboard.injector import KeyboardInjector
         from zephyrlink.mouse.injector import MouseInjector
 
-        self._screen = get_virtual_screen()
-        self._mouse = MouseInjector(self._screen)
+        self._refresh_geometry()
+        assert self._screen is not None and self._layout is not None
+        self._mouse = MouseInjector(self._layout)
         self._keyboard = KeyboardInjector()
-        logger.info("Cliente iniciado (tela=%dx%d)", self._screen.width, self._screen.height)
+        logger.info(
+            "Cliente iniciado (tela=%dx%d, %d monitor(es))",
+            self._screen.width, self._screen.height, len(self._layout.monitors),
+        )
 
         while not self._stopping.is_set():
             endpoint = await self._resolve_server()
@@ -73,6 +97,15 @@ class ZephyrLinkClient:
     def stop(self) -> None:
         self._stopping.set()
 
+    def _refresh_geometry(self) -> None:
+        """(Re)consulta os monitores físicos. Chamado ao iniciar e a cada
+        sessão, para acompanhar mudanças de exibição (ex.: alternar para
+        'somente a segunda tela') feitas com o cliente já em execução."""
+        self._layout = MonitorLayout.detect()
+        self._screen = self._layout.bounds
+        if self._mouse is not None:
+            self._mouse.set_layout(self._layout)
+
     async def _wait_retry(self) -> None:
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(
@@ -89,6 +122,7 @@ class ZephyrLinkClient:
         )
 
     async def _session(self, host: str, port: int) -> None:
+        self._refresh_geometry()
         logger.info("Conectando a %s:%d...", host, port)
         ssl_context = build_client_ssl_context(self._config.security)
         reader, writer = await asyncio.wait_for(
@@ -110,6 +144,8 @@ class ZephyrLinkClient:
         self._server_layout = result.data.get("layout")
         assert self._screen is not None
         await stream.send(Message(MsgType.SCREEN_INFO, {"screen": self._screen.to_dict()}))
+        if self._config.launcher.enabled:
+            await stream.send(self._catalog.catalog_message())
 
         logger.info("Conectado a %s:%d (o servidor define a borda)", host, port)
         self._stream = stream
@@ -149,6 +185,8 @@ class ZephyrLinkClient:
                     await self._clipboard.apply_remote(str(message.data.get("text", "")))
                 case MsgType.FILE_OFFER | MsgType.FILE_DATA | MsgType.FILE_END:
                     await self._clipboard.apply_file_message(message)
+                case MsgType.LAUNCH_REQUEST:
+                    await self._handle_launch(stream, message.data)
                 case MsgType.PING:
                     await stream.send(Message(MsgType.PONG, {}))
                 case MsgType.AUTH_FAIL:
@@ -226,6 +264,127 @@ class ZephyrLinkClient:
                 await stream.send(message)
 
         await send_files(paths, send, max_total=self._config.clipboard.file_max_bytes)
+
+    async def _handle_launch(self, stream: MessageStream, data: dict[str, Any]) -> None:
+        req_id = str(data.get("req_id", ""))
+        app_id = str(data.get("app_id", ""))
+        args = list(data.get("args") or [])
+
+        async def deny(reason: str) -> None:
+            await self._launch_reply(stream, req_id, accepted=False, reason=reason)
+            await self._audit(stream, req_id, app_id, args, "rejected", reason=reason)
+
+        if not self._config.launcher.enabled:
+            await deny("desabilitado")
+            return
+        if not req_id:
+            logger.warning("Launch sem req_id; ignorado")
+            await deny("req_id_ausente")
+            return
+        if req_id in self._seen_reqs:
+            logger.warning("Launch ignorado: req_id repetido %s", req_id)
+            await deny("replay")
+            return
+        try:
+            ts = float(data.get("ts"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            logger.warning("Launch sem timestamp válido (req %s)", req_id)
+            await deny("ts_invalido")
+            return
+        if abs(time.time() - ts) > LAUNCH_FRESHNESS_S:
+            logger.warning("Launch expirado: %s (req %s)", app_id, req_id)
+            await deny("expirado")
+            return
+        self._seen_reqs.append(req_id)
+        if not self._allow_rate():
+            logger.warning("Launch recusado por rate-limit (req %s)", req_id)
+            await deny("rate_limit")
+            return
+        app = self._catalog.resolve(app_id)
+        if app is None:
+            logger.warning("Launch negado: app desconhecido %r (req %s)", app_id, req_id)
+            await deny("app_desconhecido")
+            return
+        try:
+            safe_args = validate_args(app, args)
+        except ArgError as exc:
+            logger.warning("Launch negado: parâmetro inválido %s (req %s): %s", app_id, req_id, exc)
+            await deny(f"arg_invalido: {exc}")
+            return
+        try:
+            await verify_executable(app)
+        except IntegrityError as exc:
+            logger.warning("Launch negado: integridade %s (req %s): %s", app_id, req_id, exc)
+            await deny(f"integridade: {exc}")
+            return
+        if app.require_confirm:
+            ok = await confirm("ZephyrLink", f"Abrir '{app.label}'?\nSolicitado pelo servidor.")
+            if not ok:
+                logger.info("Launch negado pelo usuário: %s (req %s)", app_id, req_id)
+                await deny("negado_pelo_usuario")
+                return
+        logger.info("Launch aceito: %s (req %s)", app_id, req_id)
+        await self._launch_reply(stream, req_id, accepted=True)
+        await self._launch_state(stream, req_id, app_id, "launching")
+        try:
+            pid = await launch(app, safe_args)
+        except LaunchError as exc:
+            logger.warning("Launch falhou: %s (req %s): %s", app_id, req_id, exc)
+            await self._launch_state(stream, req_id, app_id, "failed", error=str(exc))
+            await self._audit(stream, req_id, app_id, args, "failed", error=str(exc))
+            return
+        logger.info("Launch ok: %s pid=%d (req %s)", app_id, pid, req_id)
+        await self._launch_state(stream, req_id, app_id, "completed", pid=pid)
+        await self._audit(stream, req_id, app_id, args, "completed", pid=pid)
+
+    def _allow_rate(self) -> bool:
+        now = time.monotonic()
+        window = self._launch_times
+        while window and now - window[0] > 60.0:
+            window.popleft()
+        if len(window) >= self._config.launcher.rate_limit_per_min:
+            return False
+        window.append(now)
+        return True
+
+    async def _audit(
+        self, stream: MessageStream, req_id: str, app_id: str, args: list[str],
+        decision: str, **extra: Any,
+    ) -> None:
+        await self._audit_log.write(
+            {"req_id": req_id, "app_id": app_id, "args": args,
+             "origin": stream.peer_host, "decision": decision, **extra}
+        )
+
+    @staticmethod
+    async def _launch_reply(
+        stream: MessageStream, req_id: str, *, accepted: bool, reason: str | None = None
+    ) -> None:
+        with contextlib.suppress(ConnectionError, OSError):
+            await stream.send(
+                Message(
+                    MsgType.LAUNCH_ACK,
+                    {"req_id": req_id, "accepted": accepted, "reason": reason},
+                )
+            )
+
+    @staticmethod
+    async def _launch_state(
+        stream: MessageStream,
+        req_id: str,
+        app_id: str,
+        state: str,
+        *,
+        pid: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        with contextlib.suppress(ConnectionError, OSError):
+            await stream.send(
+                Message(
+                    MsgType.LAUNCH_RESULT,
+                    {"req_id": req_id, "app_id": app_id, "state": state, "pid": pid, "error": error},
+                )
+            )
 
     def _emit_status(self) -> None:
         if self._on_status is None:

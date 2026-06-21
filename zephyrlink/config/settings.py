@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 VALID_EDGES = ("left", "right", "top", "bottom")
 VALID_ROLES = ("server", "client")
+VALID_PLATFORMS = ("windows", "linux", "macos")
+VALID_ARG_KINDS = ("none", "url", "path_in_dir", "enum")
 
 
 class ConfigError(Exception):
@@ -64,6 +66,45 @@ class ClipboardConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LaunchableApp:
+    """Uma aplicação que o cliente autoriza o servidor a abrir.
+
+    ``command`` é resolvido apenas no cliente (dono da máquina-alvo): o
+    servidor nunca envia um caminho livre, só o ``id`` desta entrada.
+    ``platform`` ``None`` vale para qualquer SO.
+
+    Parâmetros do operador (Fase 2): quando ``accepts_args``, o cliente valida
+    o único parâmetro conforme ``arg_kind`` antes de anexá-lo ao ``command``:
+
+    * ``url`` — esquema em ``allowed_url_schemes`` e host em
+      ``allowed_url_hosts`` (vazio = qualquer host);
+    * ``path_in_dir`` — caminho resolvido dentro de ``allowed_dirs``;
+    * ``enum`` — valor exato em ``enum_values``.
+    """
+
+    id: str
+    label: str
+    command: tuple[str, ...]
+    platform: str | None = None
+    accepts_args: bool = False
+    arg_kind: str = "none"
+    allowed_dirs: tuple[str, ...] = ()
+    allowed_url_schemes: tuple[str, ...] = ("https",)
+    allowed_url_hosts: tuple[str, ...] = ()
+    enum_values: tuple[str, ...] = ()
+    require_confirm: bool = False
+    sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LauncherConfig:
+    enabled: bool = False
+    rate_limit_per_min: int = 30
+    audit_file: str | None = None
+    apps: tuple[LaunchableApp, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     role: str = "server"
     name: str = "zephyrlink"
@@ -73,6 +114,7 @@ class AppConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     clipboard: ClipboardConfig = field(default_factory=ClipboardConfig)
+    launcher: LauncherConfig = field(default_factory=LauncherConfig)
 
 
 def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
@@ -82,12 +124,85 @@ def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
+def _build_launcher(raw: dict[str, Any]) -> LauncherConfig:
+    entries = raw.get("apps") or []
+    if not isinstance(entries, list):
+        raise ConfigError("launcher.apps deve ser uma lista")
+    apps: list[LaunchableApp] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ConfigError("cada item de launcher.apps deve ser um mapeamento")
+        app_id = str(entry.get("id", "")).strip()
+        if not app_id:
+            raise ConfigError("launcher.apps: cada app precisa de um 'id'")
+        if app_id in seen:
+            raise ConfigError(f"launcher.apps: id duplicado: {app_id!r}")
+        command = entry.get("command")
+        if isinstance(command, str):
+            command = [command]
+        if not isinstance(command, list) or not command or not all(command):
+            raise ConfigError(f"launcher.apps[{app_id}].command deve ser lista não vazia")
+        platform = entry.get("platform")
+        if platform is not None and str(platform).lower() not in VALID_PLATFORMS:
+            raise ConfigError(
+                f"launcher.apps[{app_id}].platform deve ser um de {VALID_PLATFORMS}"
+            )
+        accepts_args = bool(entry.get("accepts_args", False))
+        arg_kind = str(entry.get("arg_kind", "none")).lower()
+        if arg_kind not in VALID_ARG_KINDS:
+            raise ConfigError(f"launcher.apps[{app_id}].arg_kind deve ser um de {VALID_ARG_KINDS}")
+        if accepts_args and arg_kind == "none":
+            raise ConfigError(f"launcher.apps[{app_id}] aceita args mas arg_kind é 'none'")
+        if not accepts_args:
+            arg_kind = "none"
+        allowed_dirs = tuple(str(d) for d in (entry.get("allowed_dirs") or ()))
+        enum_values = tuple(str(v) for v in (entry.get("enum_values") or ()))
+        if arg_kind == "path_in_dir" and not allowed_dirs:
+            raise ConfigError(f"launcher.apps[{app_id}] arg_kind 'path_in_dir' exige allowed_dirs")
+        if arg_kind == "enum" and not enum_values:
+            raise ConfigError(f"launcher.apps[{app_id}] arg_kind 'enum' exige enum_values")
+        sha256 = entry.get("sha256")
+        if sha256 is not None:
+            sha256 = str(sha256).strip().lower()
+            if len(sha256) != 64 or any(c not in "0123456789abcdef" for c in sha256):
+                raise ConfigError(f"launcher.apps[{app_id}].sha256 deve ser hex de 64 caracteres")
+        seen.add(app_id)
+        apps.append(
+            LaunchableApp(
+                id=app_id,
+                label=str(entry.get("label", app_id)),
+                command=tuple(str(part) for part in command),
+                platform=str(platform).lower() if platform is not None else None,
+                accepts_args=accepts_args,
+                arg_kind=arg_kind,
+                allowed_dirs=allowed_dirs,
+                allowed_url_schemes=tuple(str(s).lower() for s in (entry.get("allowed_url_schemes") or ("https",))),
+                allowed_url_hosts=tuple(str(h).lower() for h in (entry.get("allowed_url_hosts") or ())),
+                enum_values=enum_values,
+                require_confirm=bool(entry.get("require_confirm", False)),
+                sha256=sha256,
+            )
+        )
+    rate = int(raw.get("rate_limit_per_min", 30))
+    if rate <= 0:
+        raise ConfigError("launcher.rate_limit_per_min deve ser positivo")
+    audit_file = raw.get("audit_file")
+    return LauncherConfig(
+        enabled=bool(raw.get("enabled", False)),
+        rate_limit_per_min=rate,
+        audit_file=str(audit_file) if audit_file else None,
+        apps=tuple(apps),
+    )
+
+
 def build_config(raw: dict[str, Any]) -> AppConfig:
     """Constrói e valida um ``AppConfig`` a partir de um dicionário."""
     net = _section(raw, "network")
     sec = _section(raw, "security")
     layout = _section(raw, "layout")
     clip = _section(raw, "clipboard")
+    launcher = _section(raw, "launcher")
 
     config = AppConfig(
         role=str(raw.get("role", "server")),
@@ -123,6 +238,7 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
             files_enabled=bool(clip.get("files_enabled", True)),
             file_max_bytes=int(clip.get("file_max_bytes", 200_000_000)),
         ),
+        launcher=_build_launcher(launcher),
     )
 
     if config.role not in VALID_ROLES:
