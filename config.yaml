@@ -63,7 +63,7 @@ launcher:
     # Parâmetro validado (Fase 2). arg_kind: url | path_in_dir | enum.
     - id: navegador
       label: Navegador (URL)
-      command: ["cmd", "/c", "start", ""]
+      command: ["C:\\Program Files\\Mozilla Firefox\\firefox.exe"]
       platform: windows
       accepts_args: true
       arg_kind: url
