@@ -163,8 +163,8 @@ zephyrlink launch --client 192.168.10.121 --app dashboard-rtc
 zephyrlink launch --client bottom --app navegador --arg https://intranet.empresa.com
 ```
 
-Para ver os `id` disponíveis (o `--app` usa o **id**, não o label), liste o catálogo
-publicado pelos clientes:
+O `--app` aceita o **id** ou o **label** (ex.: `--app gid` ou `--app "GID (Caixa)"`).
+Para ver o que cada cliente publicou, liste o catálogo:
 
 ```bash
 zephyrlink apps                          # todos os clientes

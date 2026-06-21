@@ -9,7 +9,7 @@ from zephyrlink.config import ConfigError, LaunchableApp, LauncherConfig, load_c
 from zephyrlink.config.persist import save_connection, save_launcher
 from zephyrlink.config.settings import build_config
 from zephyrlink.launcher.audit import AuditLog
-from zephyrlink.launcher.catalog import AppCatalog, current_platform
+from zephyrlink.launcher.catalog import AppCatalog, current_platform, resolve_app_ref
 from zephyrlink.launcher.integrity import IntegrityError, verify_executable
 from zephyrlink.launcher.validate import ArgError, validate_args
 from zephyrlink.transport import MsgType
@@ -90,6 +90,29 @@ class AppCatalogTest(unittest.TestCase):
         apps = message.data["apps"]
         self.assertEqual({k for app in apps for k in app}, {"id", "label", "accepts_args", "arg_kind"})
         self.assertIn("here", {a["id"] for a in apps})
+
+
+class ResolveAppRefTest(unittest.TestCase):
+    CATALOG = [
+        {"id": "gid", "label": "GID (Caixa)"},
+        {"id": "navegador", "label": "Navegador (URL)"},
+    ]
+
+    def test_id_passes_through(self) -> None:
+        self.assertEqual(resolve_app_ref(self.CATALOG, "gid"), "gid")
+
+    def test_exact_label_maps_to_id(self) -> None:
+        self.assertEqual(resolve_app_ref(self.CATALOG, "GID (Caixa)"), "gid")
+
+    def test_label_case_insensitive(self) -> None:
+        self.assertEqual(resolve_app_ref(self.CATALOG, "gid (caixa)"), "gid")
+
+    def test_unknown_returns_ref(self) -> None:
+        self.assertEqual(resolve_app_ref(self.CATALOG, "inexistente"), "inexistente")
+
+    def test_id_wins_over_label_collision(self) -> None:
+        catalog = [{"id": "a", "label": "b"}, {"id": "x", "label": "a"}]
+        self.assertEqual(resolve_app_ref(catalog, "a"), "a")
 
 
 class ArgConfigTest(unittest.TestCase):
