@@ -12,3 +12,6 @@ venv/
 # certificados TLS locais
 *.key
 *.crt
+
+# config ao vivo (gerado/editado pela GUI); use config.example.yaml como modelo
+config.yaml

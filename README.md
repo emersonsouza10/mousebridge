@@ -180,12 +180,18 @@ por padrão.
 
 ### Arquivo de configuração
 
-Tudo pode ser definido em YAML (veja [`config.yaml`](config.yaml) com todos os campos
-comentados):
+Tudo pode ser definido em YAML. O repositório traz
+[`config.example.yaml`](config.example.yaml) com todos os campos comentados — copie
+para `config.yaml` e ajuste:
 
 ```bash
+cp config.example.yaml config.yaml   # Windows: copy config.example.yaml config.yaml
 zephyrlink server -c config.yaml
 ```
+
+O `config.yaml` **não é versionado** (está no `.gitignore`): é o seu arquivo ao vivo,
+que a GUI grava e o cliente/servidor carregam automaticamente. Assim, `git pull` nunca
+sobrescreve a sua configuração.
 
 Exemplo mínimo:
 
