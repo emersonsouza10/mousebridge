@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from zephyrlink.config import ConfigError, LaunchableApp, LauncherConfig, load_config
-from zephyrlink.config.persist import save_launcher
+from zephyrlink.config.persist import save_connection, save_launcher
 from zephyrlink.config.settings import build_config
 from zephyrlink.launcher.audit import AuditLog
 from zephyrlink.launcher.catalog import AppCatalog, current_platform
@@ -254,6 +254,27 @@ class PersistTest(unittest.TestCase):
             ])
             self.assertTrue(path.exists())
             self.assertEqual(load_config(str(path)).launcher.apps[0].id, "a")
+
+    def test_save_connection_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            save_connection(str(path), role="client", manual_host="192.168.10.50",
+                            shared_key="segredo")
+            config = load_config(str(path))
+            self.assertEqual(config.role, "client")
+            self.assertEqual(config.network.manual_host, "192.168.10.50")
+            self.assertEqual(config.security.shared_key, "segredo")
+
+    def test_save_connection_preserves_launcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            save_launcher(str(path), enabled=True, apps=[
+                {"id": "a", "label": "A", "command": ["x"]},
+            ])
+            save_connection(str(path), role="server", manual_host=None, shared_key="k")
+            config = load_config(str(path))
+            self.assertEqual(config.security.shared_key, "k")
+            self.assertEqual(len(config.launcher.apps), 1)
 
 
 class AuditTest(unittest.TestCase):

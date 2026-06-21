@@ -339,11 +339,22 @@ class ZephyrLinkGUI:
             network=replace(self._config.network, manual_host=manual),
             security=replace(self._config.security, shared_key=self._key_var.get()),
         )
+        self._config = config
+        self._remember_connection(config, manual)
         self._core_thread = _CoreThread(config, self._status_queue)
         self._core_thread.start()
         self._start_btn.configure(state=tk.DISABLED)
         self._stop_btn.configure(state=tk.NORMAL)
         logger.info("Iniciado em modo %s", config.role)
+
+    def _remember_connection(self, config: AppConfig, manual: str | None) -> None:
+        from zephyrlink.config.persist import save_connection
+
+        try:
+            save_connection(self._config_path, role=config.role, manual_host=manual,
+                            shared_key=config.security.shared_key)
+        except OSError:
+            logger.warning("Não foi possível salvar a conexão em %s", self._config_path)
 
     def _on_stop(self) -> None:
         if self._core_thread is not None:
