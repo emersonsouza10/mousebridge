@@ -109,6 +109,54 @@ Escolha o papel (servidor/cliente), a borda e opcionalmente o IP manual, e cliqu
 **Iniciar**. A janela mostra conexão, IPs, computador ativo, o diagrama das telas e os
 logs ao vivo.
 
+### Abertura remota de aplicações
+
+O servidor pode pedir a um cliente que **abra uma aplicação** (Notepad, navegador,
+calculadora, executáveis corporativos). O modelo é **fechado por construção**: quem
+decide o que pode ser aberto é o **cliente** (a máquina-alvo), não o operador. O
+servidor envia apenas um `id`; o comando real nunca trafega.
+
+Cadastre no `config.yaml` **do cliente** (desligado por padrão):
+
+```yaml
+launcher:
+  enabled: true
+  rate_limit_per_min: 30           # teto de aberturas que este cliente aceita por minuto
+  audit_file: null                 # opt-in: .jsonl com as decisões; null = desligado
+  apps:
+    - id: notepad
+      label: Bloco de Notas
+      command: ["notepad.exe"]
+      platform: windows            # windows | linux | macos | omitido = qualquer
+      sha256: "a1b2…"              # opcional: recusa abrir se o binário não bater
+    - id: navegador
+      label: Navegador (URL)
+      command: ["xdg-open"]
+      platform: linux
+      accepts_args: true           # operador pode informar um parâmetro
+      arg_kind: url                # url | path_in_dir | enum
+      allowed_url_schemes: ["https"]
+      allowed_url_hosts: ["*.empresa.com"]   # vazio = qualquer host
+      require_confirm: true        # pede confirmação na máquina-alvo
+```
+
+Na GUI do servidor, o painel **Aplicações remotas** lista os apps que cada cliente
+publicou, oferece um campo de **parâmetro** (habilitado só para apps que aceitam),
+dispara a abertura e mostra o histórico com o estado de cada pedido
+(Enviado → Recebido → Executando → Concluído / Falhou).
+
+Garantias do modelo: o **parâmetro é validado no cliente** conforme o `arg_kind`
+(esquema/host de URL, caminho contido em `allowed_dirs`, ou valor de uma lista
+`enum_values`); apps com `require_confirm` exigem aprovação na própria máquina-alvo;
+pedidos repetidos ou fora de uma janela de 30 s são descartados (anti-replay); e a
+execução é sempre sem shell (`shell=False`) e sob o usuário do cliente — nunca elevada.
+
+Endurecimento opcional: defina `sha256` por app para que o cliente **recuse abrir
+se o binário no disco tiver sido trocado** (defesa contra substituição por malware),
+e aponte `audit_file` para um caminho `.jsonl` para registrar cada decisão (aceita,
+recusada, concluída, falha) com carimbo de tempo. Ambos são opt-in e ficam desligados
+por padrão.
+
 ### Arquivo de configuração
 
 Tudo pode ser definido em YAML (veja [`config.yaml`](config.yaml) com todos os campos

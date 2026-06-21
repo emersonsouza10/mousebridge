@@ -13,6 +13,7 @@ import asyncio
 import logging
 import queue
 import threading
+import time
 import tkinter as tk
 from dataclasses import replace
 from tkinter import scrolledtext, ttk
@@ -27,6 +28,16 @@ from zephyrlink.logging_setup import setup_logging
 logger = logging.getLogger(__name__)
 
 POLL_MS = 100
+
+_STATE_LABELS = {
+    "sent": "Enviado",
+    "received": "Recebido",
+    "launching": "Executando",
+    "completed": "Concluído",
+    "failed": "Falhou",
+    "rejected": "Rejeitado",
+    "timeout": "Falhou (timeout)",
+}
 
 
 class _QueueLogHandler(logging.Handler):
@@ -84,6 +95,10 @@ class ZephyrLinkGUI:
         self._principal_rect: tuple[float, float, float, float] = (0, 0, 0, 0)
         self._drag: dict[str, Any] | None = None
         self._active: str | None = None
+        self._launches: list[dict[str, Any]] = []
+        self._client_cid: dict[str, int] = {}
+        self._app_label_id: dict[str, str] = {}
+        self._app_accepts: dict[str, bool] = {}
         self._status_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._log_queue: queue.Queue[str] = queue.Queue(maxsize=1000)
 
@@ -145,6 +160,34 @@ class ZephyrLinkGUI:
         self._canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
         self._canvas.bind("<Configure>", lambda _e: self._draw_layout())
         self._draw_layout()
+
+        launcher = ttk.LabelFrame(main, text="Aplicações remotas", padding=8)
+        launcher.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(launcher, text="Cliente:").grid(row=0, column=0, sticky="w")
+        self._app_client_var = tk.StringVar()
+        self._app_client_combo = ttk.Combobox(launcher, textvariable=self._app_client_var,
+                                               width=20, state="readonly")
+        self._app_client_combo.grid(row=0, column=1, sticky="w", padx=6)
+        self._app_client_combo.bind("<<ComboboxSelected>>", lambda _e: self._refresh_app_list())
+        ttk.Label(launcher, text="App:").grid(row=0, column=2, sticky="w")
+        self._app_var = tk.StringVar()
+        self._app_combo = ttk.Combobox(launcher, textvariable=self._app_var, width=20, state="readonly")
+        self._app_combo.grid(row=0, column=3, sticky="w", padx=6)
+        self._app_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_args_state())
+        ttk.Label(launcher, text="Parâmetro:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self._app_args_var = tk.StringVar()
+        self._app_args_entry = ttk.Entry(launcher, textvariable=self._app_args_var,
+                                         width=36, state=tk.DISABLED)
+        self._app_args_entry.grid(row=1, column=1, columnspan=2, sticky="we", padx=6, pady=(6, 0))
+        ttk.Button(launcher, text="Abrir no cliente", command=self._on_launch).grid(
+            row=1, column=3, padx=6, pady=(6, 0))
+        cols = ("hora", "cliente", "app", "estado")
+        self._history = ttk.Treeview(launcher, columns=cols, show="headings", height=5)
+        for col, width in zip(cols, (70, 130, 150, 130)):
+            self._history.heading(col, text=col.capitalize())
+            self._history.column(col, width=width, anchor="w")
+        self._history.grid(row=2, column=0, columnspan=4, sticky="we", pady=(8, 0))
+        launcher.columnconfigure(1, weight=1)
 
         logs = ttk.LabelFrame(main, text="Logs", padding=8)
         logs.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
@@ -337,8 +380,64 @@ class ZephyrLinkGUI:
         self._status_vars["remote_ip"].set(status.get("remote_ip") or "-")
         self._status_vars["active"].set(status.get("active") or "-")
         self._clients_status = status.get("clients") or []
+        self._launches = status.get("launches") or []
         self._active = status.get("active")
         self._draw_layout()
+        self._refresh_launcher()
+
+    def _refresh_launcher(self) -> None:
+        self._client_cid = {
+            f"{c['host']} ({c.get('edge') or 'sem borda'})": c["cid"]
+            for c in self._clients_status
+        }
+        values = list(self._client_cid)
+        self._app_client_combo["values"] = values
+        if self._app_client_var.get() not in self._client_cid:
+            self._app_client_var.set(values[0] if values else "")
+        self._refresh_app_list()
+        self._refresh_history()
+
+    def _refresh_app_list(self) -> None:
+        cid = self._client_cid.get(self._app_client_var.get())
+        catalog: list[dict[str, Any]] = next(
+            (c.get("catalog") or [] for c in self._clients_status if c["cid"] == cid), []
+        )
+        self._app_label_id = {}
+        self._app_accepts = {}
+        for a in catalog:
+            disp = a["label"] if a["label"] not in self._app_label_id else f"{a['label']} ({a['id']})"
+            self._app_label_id[disp] = a["id"]
+            self._app_accepts[disp] = bool(a.get("accepts_args"))
+        labels = list(self._app_label_id)
+        self._app_combo["values"] = labels
+        if self._app_var.get() not in self._app_label_id:
+            self._app_var.set(labels[0] if labels else "")
+        self._update_args_state()
+
+    def _update_args_state(self) -> None:
+        accepts = self._app_accepts.get(self._app_var.get(), False)
+        self._app_args_entry.configure(state=tk.NORMAL if accepts else tk.DISABLED)
+        if not accepts:
+            self._app_args_var.set("")
+
+    def _refresh_history(self) -> None:
+        self._history.delete(*self._history.get_children())
+        for rec in reversed(self._launches):
+            hora = time.strftime("%H:%M:%S", time.localtime(rec.get("ts", 0)))
+            estado = _STATE_LABELS.get(rec.get("state", ""), rec.get("state", ""))
+            if rec.get("error"):
+                estado = f"{estado}: {rec['error']}"
+            self._history.insert("", "end", values=(hora, rec.get("host", "-"),
+                                                     rec.get("label", "-"), estado))
+
+    def _on_launch(self) -> None:
+        core = self._core_thread.core if self._core_thread is not None else None
+        cid = self._client_cid.get(self._app_client_var.get())
+        app_id = self._app_label_id.get(self._app_var.get())
+        text = self._app_args_var.get().strip()
+        args = [text] if text else []
+        if core is not None and cid is not None and app_id and hasattr(core, "launch_app"):
+            core.launch_app(cid, app_id, args)
 
     def run(self) -> None:
         self._root.mainloop()

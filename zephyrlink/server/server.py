@@ -26,6 +26,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import secrets
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -65,6 +67,7 @@ class ClientSession:
     stream: MessageStream
     screen: dict[str, int]
     edge: str | None = None
+    catalog: list[dict[str, str]] = field(default_factory=list)
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
 
 
@@ -82,6 +85,7 @@ class ZephyrLinkServer:
         self._mouse_capture: Any = None
         self._keyboard_capture: Any = None
         self._clipboard = ClipboardSync(config.clipboard)
+        self._launches: dict[str, dict[str, Any]] = {}
         self._stopping = asyncio.Event()
 
     async def run(self) -> None:
@@ -363,6 +367,14 @@ class ZephyrLinkServer:
                 case MsgType.FILE_OFFER | MsgType.FILE_DATA | MsgType.FILE_END:
                     await self._clipboard.apply_file_message(message)
                     await self._broadcast_message(message, exclude_cid=session.cid)
+                case MsgType.LAUNCH_CATALOG:
+                    session.catalog = list(message.data.get("apps") or [])
+                    logger.info("Catálogo de '%s': %d app(s)", session.host, len(session.catalog))
+                    self._emit_status()
+                case MsgType.LAUNCH_ACK:
+                    self._on_launch_ack(message.data)
+                case MsgType.LAUNCH_RESULT:
+                    self._on_launch_result(message.data)
                 case MsgType.PONG:
                     pass  # last_received já atualizado pelo stream
                 case _:
@@ -399,11 +411,75 @@ class ZephyrLinkServer:
             return
         await send_files(paths, self._broadcast_message, max_total=self._config.clipboard.file_max_bytes)
 
+    def launch_app(self, cid: int, app_id: str, args: list[str] | None = None) -> None:
+        """Pede a um cliente que abra ``app_id``. Thread-safe (chamável pela GUI)."""
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._start_launch, cid, app_id, list(args or []))
+
+    def _start_launch(self, cid: int, app_id: str, args: list[str]) -> None:
+        session = self._clients.get(cid)
+        if session is None:
+            return
+        label = next((a["label"] for a in session.catalog if a.get("id") == app_id), app_id)
+        req_id = secrets.token_hex(4)
+        record = {
+            "req_id": req_id, "cid": cid, "host": session.host, "app_id": app_id,
+            "label": label, "args": args, "state": "sent", "ts": time.time(),
+            "pid": None, "error": None,
+        }
+        self._launches[req_id] = record
+        while len(self._launches) > 100:
+            del self._launches[next(iter(self._launches))]
+        logger.info("Launch solicitado: %s em %s (req %s)", app_id, session.host, req_id)
+        asyncio.create_task(self._send_launch(session, req_id, app_id, args))
+        self._emit_status()
+
+    async def _send_launch(
+        self, session: ClientSession, req_id: str, app_id: str, args: list[str]
+    ) -> None:
+        try:
+            await session.stream.send(
+                Message(
+                    MsgType.LAUNCH_REQUEST,
+                    {"req_id": req_id, "app_id": app_id, "args": args, "ts": time.time()},
+                )
+            )
+        except (ConnectionError, OSError):
+            self._set_launch(req_id, state="failed", error="conexão perdida")
+            return
+        await asyncio.sleep(5.0)
+        record = self._launches.get(req_id)
+        if record is not None and record["state"] == "sent":
+            logger.warning("Launch sem confirmação em 5s (req %s)", req_id)
+            self._set_launch(req_id, state="timeout")
+
+    def _on_launch_ack(self, data: dict[str, Any]) -> None:
+        req_id = str(data.get("req_id", ""))
+        if data.get("accepted"):
+            self._set_launch(req_id, state="received")
+        else:
+            self._set_launch(req_id, state="rejected", error=str(data.get("reason") or ""))
+
+    def _on_launch_result(self, data: dict[str, Any]) -> None:
+        state = str(data.get("state", ""))
+        if state not in ("launching", "completed", "failed"):
+            return
+        self._set_launch(
+            str(data.get("req_id", "")), state=state, pid=data.get("pid"), error=data.get("error")
+        )
+
+    def _set_launch(self, req_id: str, **fields: Any) -> None:
+        record = self._launches.get(req_id)
+        if record is None:
+            return
+        record.update(fields)
+        self._emit_status()
+
     def _emit_status(self) -> None:
         if self._on_status is None:
             return
         clients = [
-            {"cid": s.cid, "host": s.host, "edge": s.edge, "screen": s.screen}
+            {"cid": s.cid, "host": s.host, "edge": s.edge, "screen": s.screen, "catalog": s.catalog}
             for s in self._clients.values()
         ]
         self._on_status(
@@ -414,5 +490,6 @@ class ZephyrLinkServer:
                 "remote_ip": ", ".join(s.host for s in self._clients.values()) or None,
                 "active": f"cliente '{self._active_edge}'" if self._active_edge else "local",
                 "clients": clients,
+                "launches": sorted(self._launches.values(), key=lambda r: r["ts"]),
             }
         )

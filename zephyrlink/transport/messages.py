@@ -31,6 +31,10 @@ class MsgType(StrEnum):
     FILE_OFFER = "file_offer"
     FILE_DATA = "file_data"
     FILE_END = "file_end"
+    LAUNCH_CATALOG = "launch_catalog"
+    LAUNCH_REQUEST = "launch_request"
+    LAUNCH_ACK = "launch_ack"
+    LAUNCH_RESULT = "launch_result"
     PING = "ping"
     PONG = "pong"
 

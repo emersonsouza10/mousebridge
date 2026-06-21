@@ -38,3 +38,43 @@ clipboard:
   max_bytes: 16000000   # tamanho máximo de TEXTO sincronizado (bytes UTF-8)
   files_enabled: true   # copiar/colar arquivos entre as máquinas (Windows)
   file_max_bytes: 200000000  # teto total por transferência de arquivos (bytes)
+
+launcher:
+  # Abertura remota de aplicações. Configure no CLIENTE (máquina-alvo): ele
+  # define quais apps o servidor pode abrir. O servidor só envia o 'id' (e, se
+  # 'accepts_args', um parâmetro validado); o comando nunca trafega. Desligado
+  # por padrão.
+  enabled: false
+  rate_limit_per_min: 30  # teto de aberturas que ESTE cliente aceita por minuto
+  audit_file: null        # opt-in: caminho de um .jsonl com as decisões; null = desligado
+  apps:
+    - id: notepad
+      label: Bloco de Notas
+      command: ["notepad.exe"]
+      platform: windows   # windows | linux | macos | omitido (qualquer SO)
+      # sha256: a1b2...   # opcional: confere o hash de command[0] (64 hex) antes
+      #                   # de abrir. Só faz sentido quando command[0] é o próprio
+      #                   # executável-alvo, não um wrapper (cmd/start/xdg-open).
+    - id: calc
+      label: Calculadora
+      command: ["calc.exe"]
+      platform: windows
+
+    # Parâmetro validado (Fase 2). arg_kind: url | path_in_dir | enum.
+    - id: navegador
+      label: Navegador (URL)
+      command: ["cmd", "/c", "start", ""]
+      platform: windows
+      accepts_args: true
+      arg_kind: url
+      allowed_url_schemes: ["https"]
+      allowed_url_hosts: ["intranet.empresa.com", "*.empresa.com"]  # vazio = qualquer
+
+    - id: abrir-relatorio
+      label: Abrir relatório
+      command: ["notepad.exe"]
+      platform: windows
+      accepts_args: true
+      arg_kind: path_in_dir
+      allowed_dirs: ["C:\\Relatorios"]
+      require_confirm: true   # pede confirmação na máquina-alvo antes de abrir
