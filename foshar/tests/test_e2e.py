@@ -57,6 +57,12 @@ class E2ETest(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.close()
 
+    async def test_fetch_shares(self) -> None:
+        from foshar.foshar_server.rpc import fetch_shares
+
+        shares = await fetch_shares("127.0.0.1", self.port, self.config.security)
+        self.assertEqual([(s["id"], s["mode"]) for s in shares], [("proj", "rw")])
+
     async def test_wrong_key_rejected(self) -> None:
         client = FosharClient("127.0.0.1", self.port, SecurityConfig(shared_key="errada"))
         with self.assertRaises(ConnectionError):

@@ -71,3 +71,13 @@ class FosharClient:
         return await self.request(
             FsMsgType.FS_WRITE, {"share": share, "path": path, "data_b64": data_b64}
         )
+
+
+async def fetch_shares(host: str, port: int, security: SecurityConfig) -> list[dict[str, str]]:
+    """Conecta a um cliente, autentica e devolve o catálogo de pastas que ele publica."""
+    client = FosharClient(host, port, security)
+    await client.connect()
+    try:
+        return client.shares
+    finally:
+        await client.close()
