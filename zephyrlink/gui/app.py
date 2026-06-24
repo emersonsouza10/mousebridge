@@ -139,6 +139,8 @@ class ZephyrLinkGUI:
             row=0, column=3, rowspan=3, padx=(16, 0))
         ttk.Button(controls, text="Pastas compartilhadas…", command=self._open_shares_editor).grid(
             row=0, column=4, rowspan=3, padx=(8, 0))
+        ttk.Button(controls, text="Pastas dos clientes…", command=self._open_remote_shares).grid(
+            row=0, column=5, rowspan=3, padx=(8, 0))
 
         status = ttk.LabelFrame(main, text="Status", padding=8)
         status.pack(fill=tk.X, pady=(8, 0))
@@ -468,6 +470,24 @@ class ZephyrLinkGUI:
             )
             return
         open_shares_editor(self._root, self._config_path, lambda: None)
+
+    def _open_remote_shares(self) -> None:
+        try:
+            from foshar.config import read_foshar_section
+            from foshar.gui.remote_browser import open_remote_browser
+        except ImportError:
+            from tkinter import messagebox
+
+            messagebox.showerror(
+                "Foshar indisponível",
+                "O módulo foshar não está instalado nesta máquina.",
+                parent=self._root,
+            )
+            return
+        hosts = [c["host"] for c in self._clients_status]
+        _, port, cache_dir = read_foshar_section(self._config_path)
+        security = replace(self._config.security, shared_key=self._key_var.get())
+        open_remote_browser(self._root, hosts, port, security, cache_dir)
 
     def _reload_config(self) -> None:
         from zephyrlink.config import ConfigError, load_config
