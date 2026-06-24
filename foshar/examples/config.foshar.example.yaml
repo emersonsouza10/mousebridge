@@ -1,0 +1,19 @@
+# Exemplo de configuração do Foshar.
+# Reusa a seção security: do ZephyrLink (mesma chave/TLS/allowlist).
+# Copie os campos relevantes para o seu config.yaml.
+
+foshar:
+  enabled: true
+  port: 50513                  # conexão dedicada, separada do canal de input
+  cache_dir: "~/.foshar/cache" # espelho local que o VSCode abre (lado requisitante)
+  rate_limit_per_min: 600
+  audit_file: null             # opt-in: caminho .jsonl (planejado)
+  shares:                      # declarados pela máquina DONA dos arquivos
+    - id: projeto
+      path: "~/dev/projeto"    # Windows: "C:\\dev\\projeto"
+      mode: rw                 # ro | rw
+
+security:
+  shared_key: minha-chave-secreta
+  allowed_hosts: ["192.168.1.*"]
+  use_tls: false
