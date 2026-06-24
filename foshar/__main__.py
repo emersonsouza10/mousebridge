@@ -26,6 +26,14 @@ def build_parser() -> argparse.ArgumentParser:
     opener.add_argument("--host", required=True, help="IP da máquina dona dos arquivos")
     opener.add_argument("--share", required=True, help="id do share a clonar")
     opener.add_argument("--no-vscode", action="store_true", help="só sincroniza, não abre o VSCode")
+    opener.add_argument("--watch", action="store_true",
+                        help="continua sincronizando nos dois sentidos (não retorna)")
+
+    syncer = sub.add_parser("sync", parents=[common],
+                            help="sincroniza um share continuamente (bidirecional, sem VSCode)")
+    syncer.add_argument("--host", required=True, help="IP da máquina dona dos arquivos")
+    syncer.add_argument("--share", required=True, help="id do share a sincronizar")
+    syncer.add_argument("--interval", type=float, default=2.0, help="segundos entre ciclos (padrão 2)")
 
     sub.add_parser("status", parents=[common], help="lista os shares configurados nesta máquina")
     sub.add_parser("gui", parents=[common], help="abre o cadastro de pastas compartilhadas")
@@ -60,7 +68,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "open":
+        if args.watch:
+            return _run_sync(config, args.host, args.share, vscode=not args.no_vscode, interval=2.0)
         return asyncio.run(_open(config, args.host, args.share, not args.no_vscode))
+
+    if args.command == "sync":
+        return _run_sync(config, args.host, args.share, vscode=False, interval=args.interval)
 
     if args.command == "gui":
         try:
@@ -107,6 +120,54 @@ async def _open(config: FosharConfig, host: str, share: str, vscode: bool) -> in
     if vscode:
         open_in_vscode(root)
     return 0
+
+
+def _run_sync(config: FosharConfig, host: str, share: str, *, vscode: bool, interval: float) -> int:
+    try:
+        return asyncio.run(_sync_loop(config, host, share, vscode=vscode, interval=interval))
+    except KeyboardInterrupt:
+        print("\nSincronização interrompida.")
+        return 0
+
+
+async def _sync_loop(config: FosharConfig, host: str, share: str, *, vscode: bool, interval: float) -> int:
+    from foshar.foshar_cache.index import SyncIndex
+    from foshar.foshar_cache.mirror import Mirror
+    from foshar.foshar_server import FosharClient, open_in_vscode
+    from foshar.foshar_sync import SyncEngine
+
+    cache = Path(config.cache_dir).expanduser()
+    mirror = Mirror(cache / share)
+    index = SyncIndex(cache / ".foshar" / f"{share}.index.db")
+    opened = False
+    try:
+        while True:
+            client = FosharClient(host, config.port, config.security)
+            try:
+                await client.connect()
+            except (ConnectionError, OSError, asyncio.TimeoutError) as exc:
+                print(f"Sem conexão com {host}:{config.port} ({exc}); tentando de novo…", file=sys.stderr)
+                await asyncio.sleep(3.0)
+                continue
+            if share not in {s.get("id") for s in client.shares}:
+                print(f"Share '{share}' não publicado pelo host.", file=sys.stderr)
+                await client.close()
+                return 1
+            engine = SyncEngine(client, share, mirror, index, interval=interval)
+            try:
+                await engine.sync_once()
+                if vscode and not opened:
+                    open_in_vscode(mirror.root)
+                    opened = True
+                print(f"Sincronizando {mirror.root} ↔ {host}:{share} (Ctrl+C para parar)")
+                await engine.run()
+            except (ConnectionError, OSError, asyncio.TimeoutError) as exc:
+                print(f"Conexão perdida ({exc}); reconectando…", file=sys.stderr)
+            finally:
+                await client.close()
+            await asyncio.sleep(3.0)
+    finally:
+        index.close()
 
 
 if __name__ == "__main__":

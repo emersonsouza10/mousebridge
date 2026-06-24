@@ -72,6 +72,9 @@ class FosharClient:
             FsMsgType.FS_WRITE, {"share": share, "path": path, "data_b64": data_b64}
         )
 
+    async def delete(self, share: str, path: str) -> dict[str, Any]:
+        return await self.request(FsMsgType.FS_DELETE, {"share": share, "path": path})
+
 
 async def fetch_shares(host: str, port: int, security: SecurityConfig) -> list[dict[str, str]]:
     """Conecta a um cliente, autentica e devolve o catálogo de pastas que ele publica."""
