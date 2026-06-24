@@ -137,6 +137,8 @@ class ZephyrLinkGUI:
         self._stop_btn.grid(row=2, column=2, padx=12)
         ttk.Button(controls, text="Apps permitidos…", command=self._open_app_editor).grid(
             row=0, column=3, rowspan=3, padx=(16, 0))
+        ttk.Button(controls, text="Pastas compartilhadas…", command=self._open_shares_editor).grid(
+            row=0, column=4, rowspan=3, padx=(8, 0))
 
         status = ttk.LabelFrame(main, text="Status", padding=8)
         status.pack(fill=tk.X, pady=(8, 0))
@@ -452,6 +454,20 @@ class ZephyrLinkGUI:
             for a in self._config.launcher.apps
         ]
         LauncherEditor(self._root, self._config_path, apps, self._reload_config)
+
+    def _open_shares_editor(self) -> None:
+        try:
+            from foshar.gui.shares_editor import open_shares_editor
+        except ImportError:
+            from tkinter import messagebox
+
+            messagebox.showerror(
+                "Foshar indisponível",
+                "O módulo foshar não está instalado nesta máquina.",
+                parent=self._root,
+            )
+            return
+        open_shares_editor(self._root, self._config_path, lambda: None)
 
     def _reload_config(self) -> None:
         from zephyrlink.config import ConfigError, load_config

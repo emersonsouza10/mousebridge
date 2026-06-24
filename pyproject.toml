@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 zephyrlink = "zephyrlink.__main__:main"
+foshar = "foshar.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["zephyrlink*"]
+include = ["zephyrlink*", "foshar*"]
