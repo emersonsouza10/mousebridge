@@ -21,8 +21,11 @@ Pronto: sandbox de caminhos, protocolo `FS_*` + handshake HMAC em conexão dedic
 operações `list/stat/read/write/create/delete/rename/mkdir/rmdir`, cache (espelho +
 índice SQLite), manifesto/diff por hash, e clone incremental que abre no VSCode.
 
-Pendente (próximas fases): watch bidirecional + push automático (B7/B8), transferência
-de arquivos grandes por pedaços (B9), resolução de conflito (B10), msgpack/compressão.
+Sync bidirecional contínuo por polling (B7/B8), conflito last-writer-wins com backup, e
+transferência de arquivos grandes por pedaços (B9, sem teto de 8 MB).
+
+Pendente (próximas fases): latência sub-segundo via eventos (`FS_WATCH`/`FS_EVENT`),
+diff em nível de bloco, msgpack/compressão.
 
 ```bash
 # na máquina DONA dos arquivos (publica os shares do config.yaml)

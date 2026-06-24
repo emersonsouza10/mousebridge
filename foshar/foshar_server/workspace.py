@@ -7,7 +7,6 @@ espelho. Reexecutar depois de uma mudança remota baixa apenas o delta.
 
 from __future__ import annotations
 
-import base64
 import logging
 import subprocess
 from pathlib import Path
@@ -15,6 +14,7 @@ from pathlib import Path
 from foshar.foshar_cache.index import IndexEntry, SyncIndex
 from foshar.foshar_cache.mirror import Mirror
 from foshar.foshar_server.rpc import FosharClient
+from foshar.foshar_server.transfer import download
 from foshar.foshar_sync.manifest import diff
 
 logger = logging.getLogger(__name__)
@@ -31,11 +31,10 @@ async def clone(client: FosharClient, share: str, cache_dir: str | Path) -> Path
         plan = diff(remote, index.all())
         remote_by_path = {entry["path"]: entry for entry in remote}
         for rel in plan.fetch:
-            data = await client.read(share, rel)
-            mirror.write(rel, base64.b64decode(data.get("data_b64", "")))
+            digest = await download(client, share, rel, mirror.path_for(rel))
             entry = remote_by_path[rel]
             index.upsert(
-                IndexEntry(path=rel, size=entry["size"], mtime=entry["mtime"], base_hash=entry["hash"])
+                IndexEntry(path=rel, size=entry["size"], mtime=entry["mtime"], base_hash=digest)
             )
         for rel in plan.delete:
             mirror.delete(rel)

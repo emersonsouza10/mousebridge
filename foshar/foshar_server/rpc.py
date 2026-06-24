@@ -75,6 +75,19 @@ class FosharClient:
     async def delete(self, share: str, path: str) -> dict[str, Any]:
         return await self.request(FsMsgType.FS_DELETE, {"share": share, "path": path})
 
+    async def read_chunk(self, share: str, path: str, offset: int, length: int) -> dict[str, Any]:
+        return await self.request(
+            FsMsgType.FS_READ, {"share": share, "path": path, "offset": offset, "length": length}
+        )
+
+    async def write_chunk(
+        self, share: str, path: str, *, offset: int, data_b64: str, begin: bool, final: bool
+    ) -> dict[str, Any]:
+        return await self.request(
+            FsMsgType.FS_WRITE_CHUNK,
+            {"share": share, "path": path, "offset": offset, "data_b64": data_b64, "begin": begin, "final": final},
+        )
+
 
 async def fetch_shares(host: str, port: int, security: SecurityConfig) -> list[dict[str, str]]:
     """Conecta a um cliente, autentica e devolve o catálogo de pastas que ele publica."""

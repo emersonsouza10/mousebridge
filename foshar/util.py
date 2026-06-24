@@ -15,12 +15,19 @@ _DIGEST_SIZE = 16
 _CHUNK = 1 << 20
 
 
+def new_hasher() -> "hashlib._Hash":
+    """Hasher incremental (blake2b/128) — a chave de igualdade do Foshar."""
+    return hashlib.blake2b(digest_size=_DIGEST_SIZE)
+
+
 def hash_bytes(data: bytes) -> str:
-    return hashlib.blake2b(data, digest_size=_DIGEST_SIZE).hexdigest()
+    digest = new_hasher()
+    digest.update(data)
+    return digest.hexdigest()
 
 
 def hash_file(path: Path) -> str:
-    digest = hashlib.blake2b(digest_size=_DIGEST_SIZE)
+    digest = new_hasher()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(_CHUNK), b""):
             digest.update(chunk)
