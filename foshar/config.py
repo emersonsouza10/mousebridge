@@ -71,6 +71,58 @@ def _build_security(raw: dict[str, Any]) -> SecurityConfig:
     )
 
 
+def read_foshar_section(path: str | Path | None) -> tuple[list[dict[str, str]], int, str]:
+    """Lê a seção ``foshar`` crua (strings como o usuário digitou) para a GUI editar.
+
+    Diferente de ``load_foshar_config``, não resolve os caminhos para absolutos —
+    preserva ``~/dev/projeto`` como veio, para o formulário reexibir e regravar.
+    """
+    if path is None or not Path(path).exists():
+        return [], DEFAULT_PORT, DEFAULT_CACHE
+    loaded = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    foshar = loaded.get("foshar") if isinstance(loaded, dict) else {}
+    if not isinstance(foshar, dict):
+        foshar = {}
+    shares: list[dict[str, str]] = []
+    for entry in foshar.get("shares") or []:
+        if isinstance(entry, dict) and entry.get("path"):
+            shares.append(
+                {
+                    "id": str(entry.get("id", "")).strip(),
+                    "path": str(entry["path"]),
+                    "mode": str(entry.get("mode", "ro")).lower(),
+                }
+            )
+    return shares, int(foshar.get("port", DEFAULT_PORT)), str(foshar.get("cache_dir", DEFAULT_CACHE))
+
+
+def save_shares(
+    path: str | Path, *, enabled: bool, port: int, cache_dir: str, shares: list[dict[str, str]]
+) -> None:
+    """Grava a seção ``foshar`` no ``config.yaml``, preservando as demais seções.
+
+    Comentários do arquivo original não sobrevivem (PyYAML não faz round-trip de
+    comentários), mas as outras seções (``security`` etc.) são mantidas.
+    """
+    file = Path(path)
+    raw: dict[str, Any] = {}
+    if file.exists():
+        loaded = yaml.safe_load(file.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            raw = loaded
+    foshar = raw.get("foshar")
+    if not isinstance(foshar, dict):
+        foshar = {}
+    foshar["enabled"] = enabled
+    foshar["port"] = port
+    foshar["cache_dir"] = cache_dir
+    foshar["shares"] = [
+        {"id": s["id"], "path": s["path"], "mode": s["mode"]} for s in shares
+    ]
+    raw["foshar"] = foshar
+    file.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
 def load_foshar_config(path: str | Path | None) -> FosharConfig:
     if path is None:
         raw: dict[str, Any] = {}
