@@ -28,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     opener.add_argument("--no-vscode", action="store_true", help="só sincroniza, não abre o VSCode")
 
     sub.add_parser("status", parents=[common], help="lista os shares configurados nesta máquina")
+    sub.add_parser("gui", parents=[common], help="abre o cadastro de pastas compartilhadas")
     return parser
 
 
@@ -60,6 +61,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "open":
         return asyncio.run(_open(config, args.host, args.share, not args.no_vscode))
+
+    if args.command == "gui":
+        try:
+            from foshar.gui.shares_editor import run_shares_gui
+        except ImportError as exc:
+            print(f"GUI indisponível (tkinter ausente?): {exc}", file=sys.stderr)
+            return 2
+        run_shares_gui(config_path or "config.yaml")
+        return 0
 
     if args.command == "status":
         if not config.shares:

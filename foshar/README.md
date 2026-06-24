@@ -30,6 +30,8 @@ python3 -m foshar serve -c config.yaml
 
 # na máquina que vai EDITAR (clona o share e abre no VSCode)
 python3 -m foshar open --host 192.168.1.50 --share projeto
+
+python3 -m foshar gui             # cadastra as pastas compartilhadas (formulário)
 python3 -m foshar status          # lista os shares configurados
 ```
 

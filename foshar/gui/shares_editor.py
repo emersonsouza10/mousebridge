@@ -183,9 +183,19 @@ class _ShareDialog:
         self._win.destroy()
 
 
-def open_shares_editor(parent: tk.Misc, config_path: str, on_saved: Callable[[], None]) -> None:
+def open_shares_editor(parent: tk.Misc, config_path: str, on_saved: Callable[[], None]) -> SharesEditor:
     """Ponto de entrada usado pela GUI do ZephyrLink (import tardio)."""
     from foshar.config import read_foshar_section
 
     shares, port, cache_dir = read_foshar_section(config_path)
-    SharesEditor(parent, config_path, shares, on_saved, port=port, cache_dir=cache_dir)
+    return SharesEditor(parent, config_path, shares, on_saved, port=port, cache_dir=cache_dir)
+
+
+def run_shares_gui(config_path: str) -> None:
+    """Abre o cadastro de pastas como janela própria (subcomando ``foshar gui``)."""
+    root = tk.Tk()
+    root.withdraw()
+    editor = open_shares_editor(root, config_path, lambda: None)
+    editor._win.protocol("WM_DELETE_WINDOW", editor._win.destroy)
+    root.wait_window(editor._win)
+    root.destroy()
