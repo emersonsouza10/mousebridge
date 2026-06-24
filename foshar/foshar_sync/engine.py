@@ -13,7 +13,6 @@ cortar latência/banda) fica como otimização futura.
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import logging
 import os
@@ -22,11 +21,12 @@ from dataclasses import dataclass
 from foshar.foshar_cache.index import IndexEntry, SyncIndex
 from foshar.foshar_cache.mirror import Mirror
 from foshar.foshar_server.rpc import FosharClient, RpcError
+from foshar.foshar_server.transfer import download, upload
 from foshar.foshar_sync.manifest import scan
 
 logger = logging.getLogger(__name__)
 
-_IGNORE_SUFFIXES = (".foshar-tmp", ".foshar-conflict")
+_IGNORE_SUFFIXES = (".foshar-tmp", ".foshar-conflict", ".foshar-upload")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,14 +137,14 @@ class SyncEngine:
             logger.warning("Operação '%s' em '%s' recusada pelo dono: %s", action.kind, path, exc)
 
     async def _pull(self, path: str) -> None:
-        data = await self._client.read(self._share, path)
-        self._mirror.write(path, base64.b64decode(data.get("data_b64", "")))
-        self._index.upsert(IndexEntry(path, int(data.get("size", 0)), 0.0, str(data["hash"])))
+        dest = self._mirror.path_for(path)
+        digest = await download(self._client, self._share, path, dest)
+        self._index.upsert(IndexEntry(path, dest.stat().st_size, 0.0, digest))
 
     async def _push(self, path: str) -> None:
-        raw = self._mirror.path_for(path).read_bytes()
-        reply = await self._client.write(self._share, path, base64.b64encode(raw).decode("ascii"))
-        self._index.upsert(IndexEntry(path, len(raw), 0.0, str(reply["hash"])))
+        src = self._mirror.path_for(path)
+        digest = await upload(self._client, self._share, path, src)
+        self._index.upsert(IndexEntry(path, src.stat().st_size, 0.0, digest))
 
     async def _resolve_conflict(self, path: str, remote_exists: bool) -> None:
         """Last-writer-wins seguro: o remoto vence, mas a versão local é

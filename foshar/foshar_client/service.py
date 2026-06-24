@@ -28,6 +28,7 @@ _DISPATCH: dict[FsMsgType, Callable[[Sandbox, dict[str, Any]], dict[str, Any]]] 
     FsMsgType.FS_STAT: ops.op_stat,
     FsMsgType.FS_READ: ops.op_read,
     FsMsgType.FS_WRITE: ops.op_write,
+    FsMsgType.FS_WRITE_CHUNK: ops.op_write_chunk,
     FsMsgType.FS_CREATE: ops.op_create,
     FsMsgType.FS_DELETE: ops.op_delete,
     FsMsgType.FS_RENAME: ops.op_rename,

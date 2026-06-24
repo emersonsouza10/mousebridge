@@ -24,6 +24,7 @@ class FsMsgType(StrEnum):
     FS_STAT = "fs_stat"
     FS_READ = "fs_read"
     FS_WRITE = "fs_write"
+    FS_WRITE_CHUNK = "fs_write_chunk"
     FS_CREATE = "fs_create"
     FS_DELETE = "fs_delete"
     FS_RENAME = "fs_rename"
