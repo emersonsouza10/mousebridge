@@ -1,0 +1,62 @@
+# Exemplo de configuração da connInfo (Oracle-only).
+# Mora no MESMO config.yaml do ZephyrLink/Foshar: a seção `security:` é reusada
+# (mesma chave/TLS/allowlist), e a seção `conninfo:` é específica desta skill.
+#
+# Lado DONO do banco (máquina cliente): rode  `python -m conninfo host`
+# Lado agente (servidor):                rode  `python -m conninfo query --host <ip> --conn <id> --sql "..."`
+
+security:
+  shared_key: "troque-me"        # mesma chave do MouseBridge
+  use_tls: false                 # OBRIGATÓRIO true quando houver credencial/dado sensível
+  allowed_hosts: ["192.168.1.*"] # de quais agentes o host aceita conexão
+
+conninfo:
+  enabled: true
+  port: 50514                    # conexão dedicada (≠ input/foshar)
+  audit_file: ~/.conninfo/audit.jsonl
+  session_timeout_s: 1800        # sessões inativas expiram
+  max_rows_default: 10000        # teto global de linhas por consulta
+  rate_limit_per_min: 600
+  pool_size: 16                  # threads de execução de banco
+  metadata_cache_ttl_s: 300      # cache de metadata por conexão (0 desliga)
+
+  # Credencial ÚNICA para todos os bancos Oracle, resolvida NO CLIENTE e nunca
+  # trafegada. Uma conexão que já traga `user` no dsn tem precedência.
+  credentials:
+    username: "usuario_unico"
+    password_env: "CONNINFO_DB_PASSWORD"   # senha via variável de ambiente (fora do arquivo)
+    # password: "em-texto"                  # alternativa (menos segura); EXIJA use_tls: true
+
+  # Descoberta automática a partir do tnsnames.ora (roda no cliente). Mescla com
+  # `connections:` abaixo — cadastro manual vence em conflito de id.
+  discovery:
+    oracle:
+      enabled: true
+      # Onde está o tnsnames.ora. Se omitir, usa $TNS_ADMIN e
+      # $ORACLE_HOME/network/admin. Aceita um caminho ou uma lista.
+      tnsnames: "C:\\oracle\\instantclient\\network\\admin\\tnsnames.ora"
+    # forma curta: `oracle: true` usa só as variáveis de ambiente
+
+  connections:                   # cadastro manual (opcional); ficam NO CLIENTE
+    - id: oracle_homolog
+      engine: oracle
+      name: "Oracle Homologação"
+      read_only: true            # padrão seguro: DDL/DML bloqueados
+      dsn:
+        dsn: HOMOL               # alias do tnsnames.ora, ou EZConnect "host:porta/serviço"
+
+    - id: oracle_prod
+      engine: oracle
+      name: "Oracle Produção"
+      read_only: true
+      max_rows: 5000
+      dsn:
+        dsn: "dbprd:1521/PRD"    # EZConnect; usuário/senha vêm de `credentials`
+
+  # ACL por agente (opcional). Sem esta seção, um agente implícito acessa tudo e o
+  # read_only de cada conexão vale como está.
+  acl:
+    - user: oracle-advisor
+      token: "token-secreto-do-agente"
+      connections: ["oracle_prod"]    # ou "*" para todas
+      mode: read-only                 # força só-leitura mesmo em conexão rw

@@ -19,6 +19,7 @@ dependencies = [
 [project.scripts]
 zephyrlink = "zephyrlink.__main__:main"
 foshar = "foshar.__main__:main"
+conninfo = "conninfo.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["zephyrlink*", "foshar*"]
+include = ["zephyrlink*", "foshar*", "conninfo*"]
