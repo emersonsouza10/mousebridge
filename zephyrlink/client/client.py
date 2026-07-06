@@ -152,10 +152,14 @@ class ZephyrLinkClient:
         self._emit_status()
         self._clipboard.start(self._send_clipboard, self._send_files)
         watchdog = asyncio.create_task(self._watchdog_loop(stream), name="watchdog")
+        tasks = [watchdog]
+        if self._config.network.keep_awake:
+            tasks.append(asyncio.create_task(self._keep_awake_loop(), name="keepawake"))
         try:
             await self._receive_loop(stream)
         finally:
-            watchdog.cancel()
+            for task in tasks:
+                task.cancel()
 
     async def _teardown_session(self) -> None:
         self._clipboard.stop()
@@ -248,6 +252,19 @@ class ZephyrLinkClient:
                 logger.warning("Servidor silencioso por %.1fs, derrubando conexão", timeout)
                 await stream.close()
                 return
+
+    async def _keep_awake_loop(self) -> None:
+        """Impede o Windows de suspender, apagar a tela ou bloquear a sessão
+        enquanto o cliente está conectado."""
+        from zephyrlink import keepawake
+
+        try:
+            while True:
+                keepawake.keep_awake()
+                keepawake.nudge()
+                await asyncio.sleep(self._config.network.keep_awake_interval)
+        finally:
+            keepawake.allow_sleep()
 
     async def _send_clipboard(self, text: str) -> None:
         if self._stream is not None:

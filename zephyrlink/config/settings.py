@@ -36,6 +36,8 @@ class NetworkConfig:
     heartbeat_timeout: float = 8.0
     reconnect_delay: float = 3.0
     discovery_timeout: float = 5.0
+    keep_awake: bool = True
+    keep_awake_interval: float = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +223,8 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
             heartbeat_timeout=float(net.get("heartbeat_timeout", 8.0)),
             reconnect_delay=float(net.get("reconnect_delay", 3.0)),
             discovery_timeout=float(net.get("discovery_timeout", 5.0)),
+            keep_awake=bool(net.get("keep_awake", True)),
+            keep_awake_interval=float(net.get("keep_awake_interval", 30.0)),
         ),
         security=SecurityConfig(
             shared_key=str(sec.get("shared_key", "change-me")),
@@ -257,6 +261,8 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
         raise ConfigError(f"network.control_port fora do intervalo: {config.network.control_port}")
     if config.network.heartbeat_timeout <= config.network.heartbeat_interval:
         raise ConfigError("network.heartbeat_timeout deve ser maior que heartbeat_interval")
+    if config.network.keep_awake_interval <= 0:
+        raise ConfigError("network.keep_awake_interval deve ser maior que zero")
     if config.security.use_tls and not (config.security.tls_cert and config.security.tls_key):
         raise ConfigError("security.use_tls exige tls_cert e tls_key")
     if not config.security.shared_key:
