@@ -124,13 +124,21 @@ class ZephyrLinkGUI:
         ttk.Radiobutton(controls, text="Cliente (controlado)", variable=self._role_var,
                         value="client").grid(row=0, column=1, sticky="w", padx=8)
         ttk.Label(controls, text="IP manual (cliente):").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self._host_var = tk.StringVar(value=self._config.network.manual_host or "")
-        ttk.Entry(controls, textvariable=self._host_var, width=18).grid(row=1, column=1, sticky="w",
-                                                                        padx=8, pady=(6, 0))
+        # Ao abrir, sempre mostra o IP atual desta máquina (o endereço do servidor
+        # nesta rede), evitando exibir um IP salvo desatualizado.
+        self._host_var = tk.StringVar(value=get_local_ip())
+        ttk.Entry(controls, textvariable=self._host_var, width=18).grid(
+            row=1, column=1, sticky="w", padx=8, pady=(6, 0))
         ttk.Label(controls, text="Chave compartilhada:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self._key_var = tk.StringVar(value=self._config.security.shared_key)
-        ttk.Entry(controls, textvariable=self._key_var, width=18, show="•").grid(
-            row=2, column=1, sticky="w", padx=8, pady=(6, 0))
+        key_box = ttk.Frame(controls)
+        key_box.grid(row=2, column=1, sticky="w", padx=8, pady=(6, 0))
+        self._key_entry = ttk.Entry(key_box, textvariable=self._key_var, width=18, show="•")
+        self._key_entry.pack(side=tk.LEFT)
+        self._key_shown = False
+        self._key_toggle_btn = ttk.Button(key_box, text="Mostrar", width=8,
+                                           command=self._toggle_key_visibility)
+        self._key_toggle_btn.pack(side=tk.LEFT, padx=(6, 0))
         self._start_btn = ttk.Button(controls, text="Iniciar", command=self._on_start)
         self._start_btn.grid(row=0, column=2, rowspan=2, padx=12)
         self._stop_btn = ttk.Button(controls, text="Parar", command=self._on_stop, state=tk.DISABLED)
@@ -359,6 +367,11 @@ class ZephyrLinkGUI:
                             shared_key=config.security.shared_key)
         except OSError:
             logger.warning("Não foi possível salvar a conexão em %s", self._config_path)
+
+    def _toggle_key_visibility(self) -> None:
+        self._key_shown = not self._key_shown
+        self._key_entry.configure(show="" if self._key_shown else "•")
+        self._key_toggle_btn.configure(text="Ocultar" if self._key_shown else "Mostrar")
 
     def _on_stop(self) -> None:
         if self._core_thread is not None:
