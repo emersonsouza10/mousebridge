@@ -73,3 +73,34 @@ def install_macos_pynput_layout_fix() -> None:
         _kbd_darwin.keycode_context = _cached_keycode_context
         _installed = True
         logger.info("Correção de layout do pynput (macOS) instalada")
+
+
+def request_macos_accessibility() -> bool:
+    """Garante que o app peça a permissão de Acessibilidade ao próprio macOS.
+
+    Retorna ``True`` se o processo já é confiável. Caso contrário, dispara o
+    diálogo oficial do sistema (com o botão "Abrir Ajustes do Sistema"), que
+    registra o app CORRETO na lista de Acessibilidade — evitando o erro comum de
+    autorizar o app errado (ex.: o Terminal em vez do ``Python.app`` que o
+    Tkinter passa a representar). No-op fora do macOS. A permissão só passa a
+    valer após REINICIAR o app.
+    """
+    if sys.platform != "darwin":
+        return True
+    try:
+        import HIServices
+    except Exception:  # noqa: BLE001
+        logger.debug("HIServices indisponível; não dá para checar Acessibilidade", exc_info=True)
+        return False
+    if HIServices.AXIsProcessTrusted():
+        return True
+    try:
+        HIServices.AXIsProcessTrustedWithOptions({HIServices.kAXTrustedCheckOptionPrompt: True})
+        logger.warning(
+            "Permissão de Acessibilidade ausente: aceite o diálogo do macOS "
+            "(ou vá em Ajustes → Privacidade e Segurança → Acessibilidade), "
+            "LIGUE a entrada deste app e REINICIE o app."
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Falha ao solicitar a permissão de Acessibilidade", exc_info=True)
+    return False

@@ -24,6 +24,7 @@ from zephyrlink.clipboard.transfer import send_files
 from zephyrlink.config import AppConfig
 from zephyrlink.discovery import discover_server
 from zephyrlink.discovery.beacon import get_local_ip
+from zephyrlink.keepawake import allow_sleep, prevent_sleep
 from zephyrlink.keyboard.layout import activate_layout
 from zephyrlink.launcher import (
     AppCatalog,
@@ -78,20 +79,25 @@ class ZephyrLinkClient:
             "Cliente iniciado (tela=%dx%d, %d monitor(es))",
             self._screen.width, self._screen.height, len(self._layout.monitors),
         )
+        # Um Mac controlado remotamente também não deve dormir/bloquear.
+        prevent_sleep("ZephyrLink cliente ativo")
 
-        while not self._stopping.is_set():
-            endpoint = await self._resolve_server()
-            if endpoint is None:
+        try:
+            while not self._stopping.is_set():
+                endpoint = await self._resolve_server()
+                if endpoint is None:
+                    await self._wait_retry()
+                    continue
+                host, port = endpoint
+                try:
+                    await self._session(host, port)
+                except (ConnectionError, asyncio.IncompleteReadError, OSError, asyncio.TimeoutError) as exc:
+                    logger.info("Sessão encerrada (%s); reconectando...", exc or type(exc).__name__)
+                finally:
+                    await self._teardown_session()
                 await self._wait_retry()
-                continue
-            host, port = endpoint
-            try:
-                await self._session(host, port)
-            except (ConnectionError, asyncio.IncompleteReadError, OSError, asyncio.TimeoutError) as exc:
-                logger.info("Sessão encerrada (%s); reconectando...", exc or type(exc).__name__)
-            finally:
-                await self._teardown_session()
-            await self._wait_retry()
+        finally:
+            allow_sleep()
         logger.info("Cliente finalizado")
 
     def stop(self) -> None:

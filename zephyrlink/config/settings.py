@@ -55,6 +55,11 @@ class LayoutConfig:
     edge: str = "right"
     switch_margin: int = 1
     return_inset: int = 3
+    # Fixa clientes (por IP/padrão) a bordas do servidor. Cada par é
+    # ``(padrão_de_host, borda)``; padrões seguem a mesma sintaxe de
+    # ``security.allowed_hosts`` (ex.: "192.168.1.*"). Clientes sem regra pegam
+    # a primeira borda livre, evitando bordas reservadas quando possível.
+    client_edges: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +204,31 @@ def _build_launcher(raw: dict[str, Any]) -> LauncherConfig:
     )
 
 
+def _parse_client_edges(raw: Any) -> tuple[tuple[str, str], ...]:
+    """Aceita ``{host: borda}`` ou lista de ``{"host":..., "edge":...}``."""
+    if raw is None:
+        return ()
+    if isinstance(raw, dict):
+        items = list(raw.items())
+    elif isinstance(raw, list):
+        items = []
+        for entry in raw:
+            if not isinstance(entry, dict) or "host" not in entry or "edge" not in entry:
+                raise ConfigError("layout.client_edges: cada item precisa de 'host' e 'edge'")
+            items.append((entry["host"], entry["edge"]))
+    else:
+        raise ConfigError("layout.client_edges deve ser um mapa {host: borda} ou uma lista")
+    pairs: list[tuple[str, str]] = []
+    for host, edge in items:
+        edge_l = str(edge).lower()
+        if edge_l not in VALID_EDGES:
+            raise ConfigError(
+                f"layout.client_edges[{host!r}]: borda inválida {edge!r} (use {VALID_EDGES})"
+            )
+        pairs.append((str(host), edge_l))
+    return tuple(pairs)
+
+
 def build_config(raw: dict[str, Any]) -> AppConfig:
     """Constrói e valida um ``AppConfig`` a partir de um dicionário."""
     net = _section(raw, "network")
@@ -234,6 +264,7 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
             edge=str(layout.get("edge", "right")).lower(),
             switch_margin=int(layout.get("switch_margin", 1)),
             return_inset=int(layout.get("return_inset", 3)),
+            client_edges=_parse_client_edges(layout.get("client_edges")),
         ),
         clipboard=ClipboardConfig(
             enabled=bool(clip.get("enabled", True)),

@@ -19,6 +19,7 @@ handoff para o loop asyncio (ver server.py).
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -91,7 +92,21 @@ class MouseCapture:
         on_button: OnButton,
         on_scroll: OnScroll,
     ) -> None:
-        """Suprime input local e encaminha eventos como deltas."""
+        """Suprime input local e encaminha eventos como deltas.
+
+        No macOS usa os deltas de hardware do próprio evento; nas demais
+        plataformas usa o truque de recentralização."""
+        if sys.platform == "darwin":
+            self._start_forward_darwin(on_move, on_button, on_scroll)
+        else:
+            self._start_forward_recenter(on_move, on_button, on_scroll)
+
+    def _start_forward_recenter(
+        self,
+        on_move: OnMove,
+        on_button: OnButton,
+        on_scroll: OnScroll,
+    ) -> None:
         with self._lock:
             self._stop_listener()
             # Recentraliza no monitor primário, não no centro da tela virtual:
@@ -130,6 +145,58 @@ class MouseCapture:
             hide_pointer()
             self._mode = "forward"
             logger.debug("Captura de mouse: modo forward (input local suprimido)")
+
+    def _start_forward_darwin(
+        self,
+        on_move: OnMove,
+        on_button: OnButton,
+        on_scroll: OnScroll,
+    ) -> None:
+        """Modo forward no macOS: lê o delta de hardware (kCGMouseEventDeltaX/Y)
+        direto do evento e suprime o input local via ``darwin_intercept``.
+
+        O truque de recentralização não funciona no macOS: ``_position_set``
+        posta um evento sintético que o próprio tap supressivo descarta, então o
+        cursor nunca recentraliza e os deltas por diferença de posição ficam
+        errados. Os deltas de hardware do evento são imunes a isso."""
+        import Quartz
+
+        move_types = {
+            Quartz.kCGEventMouseMoved,
+            Quartz.kCGEventLeftMouseDragged,
+            Quartz.kCGEventRightMouseDragged,
+            Quartz.kCGEventOtherMouseDragged,
+        }
+
+        with self._lock:
+            self._stop_listener()
+
+            def intercept(event_type: Any, event: Any) -> None:
+                if event_type in move_types:
+                    dx = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGMouseEventDeltaX)
+                    dy = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGMouseEventDeltaY)
+                    if dx or dy:
+                        on_move(int(dx), int(dy))
+                return None  # suprime o evento local
+
+            def handle_click(x: int, y: int, button: Any, pressed: bool) -> None:
+                name = BUTTON_NAMES.get(button)
+                if name is not None:
+                    on_button(name, pressed)
+
+            def handle_scroll(x: int, y: int, dx: int, dy: int) -> None:
+                on_scroll(int(dx), int(dy))
+
+            self._listener = mouse.Listener(
+                on_click=handle_click,
+                on_scroll=handle_scroll,
+                suppress=True,
+                darwin_intercept=intercept,
+            )
+            self._listener.start()
+            hide_pointer()
+            self._mode = "forward"
+            logger.debug("Captura de mouse: modo forward macOS (deltas de hardware)")
 
     def stop(self) -> None:
         with self._lock:

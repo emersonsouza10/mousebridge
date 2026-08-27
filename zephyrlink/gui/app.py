@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -75,9 +77,14 @@ class _CoreThread(threading.Thread):
         except Exception:
             logger.exception("Núcleo encerrou com erro")
 
-    def stop(self) -> None:
+    def stop(self, join_timeout: float | None = None) -> None:
         if self._core is not None:
             self._core.stop()
+        # Esperar o núcleo encerrar de fato garante que os listeners do pynput
+        # (com seus CFRunLoops) e o asyncio parem ANTES de mexer no Tk — no
+        # macOS, destruir a janela com essas threads vivas causa SIGSEGV.
+        if join_timeout is not None and self.is_alive():
+            self.join(timeout=join_timeout)
 
     @property
     def core(self) -> Any:
@@ -110,7 +117,29 @@ class ZephyrLinkGUI:
         self._root.minsize(560, 480)
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_widgets()
+        self._fit_to_screen()
+        # Com o Tk/NSApplication já ativo, pede a Acessibilidade ao macOS para o
+        # sistema registrar o app correto (senão a captura de mouse/teclado não
+        # funciona: "This process is not trusted!").
+        from zephyrlink.keyboard.macos_compat import request_macos_accessibility
+        self._root.after(500, request_macos_accessibility)
         self._root.after(POLL_MS, self._poll_queues)
+
+    def _fit_to_screen(self) -> None:
+        """Garante que a janela caiba na tela e fique ancorada no topo.
+
+        Sem isso, em telas menores que a altura natural da janela (~960px) o
+        macOS centraliza verticalmente e empurra os controles do topo para
+        fora da área visível (atrás da barra de menu). Ancorar perto do topo
+        mantém os controles sempre acessíveis; a área de logs (embaixo) é a que
+        encolhe."""
+        self._root.update_idletasks()
+        margin_top, margin_bottom, margin_side = 40, 80, 60
+        screen_w = self._root.winfo_screenwidth()
+        screen_h = self._root.winfo_screenheight()
+        w = min(self._root.winfo_reqwidth(), screen_w - margin_side)
+        h = min(self._root.winfo_reqheight(), screen_h - margin_top - margin_bottom)
+        self._root.geometry(f"{max(w, 560)}x{max(h, 480)}+{margin_side // 2}+{margin_top}")
 
     def _build_widgets(self) -> None:
         main = ttk.Frame(self._root, padding=10)
@@ -139,6 +168,14 @@ class ZephyrLinkGUI:
         self._key_toggle_btn = ttk.Button(key_box, text="Mostrar", width=8,
                                            command=self._toggle_key_visibility)
         self._key_toggle_btn.pack(side=tk.LEFT, padx=(6, 0))
+        # Ligado por padrão: tocar a borda transfere o controle ao cliente
+        # (suprime o input local). Desmarque para manter o mouse/teclado sempre
+        # na máquina local.
+        self._edge_transfer_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(controls, text="Transferir controle ao tocar a borda",
+                        variable=self._edge_transfer_var,
+                        command=self._on_edge_transfer_toggle).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self._start_btn = ttk.Button(controls, text="Iniciar", command=self._on_start)
         self._start_btn.grid(row=0, column=2, rowspan=2, padx=12)
         self._stop_btn = ttk.Button(controls, text="Parar", command=self._on_stop, state=tk.DISABLED)
@@ -168,7 +205,7 @@ class ZephyrLinkGUI:
 
         layout_frame = ttk.LabelFrame(main, text="Posição das telas (arraste os clientes)", padding=8)
         layout_frame.pack(fill=tk.X, pady=(8, 0))
-        self._canvas = tk.Canvas(layout_frame, height=210, bg="#1e1e1e", highlightthickness=0)
+        self._canvas = tk.Canvas(layout_frame, height=170, bg="#1e1e1e", highlightthickness=0)
         self._canvas.pack(fill=tk.X)
         self._canvas.bind("<Button-1>", self._on_canvas_press)
         self._canvas.bind("<B1-Motion>", self._on_canvas_drag)
@@ -206,7 +243,7 @@ class ZephyrLinkGUI:
 
         logs = ttk.LabelFrame(main, text="Logs", padding=8)
         logs.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-        self._log_text = scrolledtext.ScrolledText(logs, height=10, state=tk.DISABLED,
+        self._log_text = scrolledtext.ScrolledText(logs, height=6, state=tk.DISABLED,
                                                    font=("Consolas", 9))
         self._log_text.pack(fill=tk.BOTH, expand=True)
 
@@ -357,7 +394,19 @@ class ZephyrLinkGUI:
         self._core_thread.start()
         self._start_btn.configure(state=tk.DISABLED)
         self._stop_btn.configure(state=tk.NORMAL)
+        # O núcleo é criado de forma assíncrona na thread; aplica o estado do
+        # checkbox assim que ele existir.
+        self._root.after(400, self._apply_edge_transfer)
         logger.info("Iniciado em modo %s", config.role)
+
+    def _on_edge_transfer_toggle(self) -> None:
+        self._apply_edge_transfer()
+
+    def _apply_edge_transfer(self) -> None:
+        """Empurra o estado do checkbox para o servidor em execução (se houver)."""
+        core = self._core_thread.core if self._core_thread else None
+        if core is not None and hasattr(core, "set_edge_transfer"):
+            core.set_edge_transfer(self._edge_transfer_var.get())
 
     def _remember_connection(self, config: AppConfig, manual: str | None) -> None:
         from zephyrlink.config.persist import save_connection
@@ -375,7 +424,7 @@ class ZephyrLinkGUI:
 
     def _on_stop(self) -> None:
         if self._core_thread is not None:
-            self._core_thread.stop()
+            self._core_thread.stop(join_timeout=5.0)
             self._core_thread = None
         self._start_btn.configure(state=tk.NORMAL)
         self._stop_btn.configure(state=tk.DISABLED)
@@ -383,7 +432,10 @@ class ZephyrLinkGUI:
 
     def _on_close(self) -> None:
         self._on_stop()
-        self._root.destroy()
+        # quit() sai do mainloop sem destruir as janelas: evita o caminho
+        # Tk_DestroyWindow, que segfaulta no macOS. A finalização é tratada
+        # em run() após o mainloop retornar.
+        self._root.quit()
 
     def _poll_queues(self) -> None:
         try:
@@ -521,6 +573,14 @@ class ZephyrLinkGUI:
 
     def run(self) -> None:
         self._root.mainloop()
+        # macOS: com módulos pyobjc/pynput carregados, a finalização normal do
+        # Tcl/Tk pode segfaultar (Tk_DestroyWindow). O encerramento funcional já
+        # ocorreu em _on_close (núcleo parado, captura encerrada); um os._exit
+        # limpo pula essa finalização problemática.
+        if sys.platform == "darwin":
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
 
 
 def run_gui(config: AppConfig, config_path: str = "config.yaml") -> None:

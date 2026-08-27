@@ -32,6 +32,12 @@ layout:
   edge: right           # left | right | top | bottom
   switch_margin: 1      # pixels de tolerância para considerar a borda atingida
   return_inset: 3       # afastamento da borda ao devolver o cursor
+  # Fixa clientes a bordas do servidor por IP/padrão (mesma sintaxe de
+  # security.allowed_hosts). Clientes sem regra pegam a primeira borda livre,
+  # evitando bordas reservadas. Sem isto, a borda depende da ordem de conexão.
+  client_edges:
+    "192.168.1.42": right
+    "192.168.1.*": left
 
 clipboard:
   enabled: true

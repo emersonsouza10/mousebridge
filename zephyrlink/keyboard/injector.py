@@ -37,6 +37,12 @@ _MODIFIERS = {
     "shift_r",
 }
 
+# Modificadores que caracterizam um ATALHO (não a produção de um caractere).
+# Shift fica de fora: em payloads sem vk (servidor macOS) o caractere já vem
+# resolvido com o Shift aplicado (ex.: '@'), então digitá-lo por Unicode é
+# correto mesmo com Shift segurado.
+_SHORTCUT_MODIFIERS = _MODIFIERS - {"shift", "shift_l", "shift_r"}
+
 class KeyboardInjector:
     def __init__(self) -> None:
         self._controller = keyboard.Controller()
@@ -57,11 +63,11 @@ class KeyboardInjector:
                 self._modifiers.discard(name)
 
         if kind == "char" and isinstance(char, str):
-            # Com o vk físico no payload a injeção é sempre por virtual key:
-            # o sistema do cliente aplica shift/altgr/caps e o estado de
-            # tecla morta (~ + a = ã) sobre o layout sincronizado. A via
-            # Unicode digitaria o caractere literal, sem composição; fica
-            # como fallback para payloads sem vk (servidor não-Windows).
+            # Com o vk físico no payload (servidor Windows) a injeção é por
+            # virtual key: o cliente aplica shift/altgr/caps e tecla morta sobre
+            # o layout sincronizado. Sem vk (servidor macOS/não-Windows) o char
+            # já vem resolvido, então digita-se por Unicode — inclusive com Shift
+            # segurado; só um modificador de ATALHO (Ctrl/Alt/Cmd) desativa isso.
             use_unicode = (
                 sys.platform == "win32"
                 and (
@@ -69,8 +75,7 @@ class KeyboardInjector:
                     or (
                         pressed
                         and not isinstance(vk, int)
-                        and not self._modifiers
-                        and not (char.isalpha() and caps_lock_active())
+                        and not (self._modifiers & _SHORTCUT_MODIFIERS)
                     )
                 )
             )

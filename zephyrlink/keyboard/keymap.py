@@ -18,6 +18,7 @@ importável (e testável) sem display.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 VALID_KINDS = ("char", "named", "vk")
@@ -60,6 +61,12 @@ def key_to_payload(key: Any) -> dict[str, Any] | None:
         return payload_from_parts(name=key.name)
     if isinstance(key, keyboard.KeyCode):
         if key.char is not None:
+            # No macOS o keycode não é portável (o cliente Windows o
+            # interpretaria como outra tecla) e o char já vem resolvido com os
+            # modificadores aplicados (ex.: '@'). Enviar sem vk faz o cliente
+            # digitar o caractere exato via Unicode.
+            if sys.platform == "darwin":
+                return payload_from_parts(char=key.char)
             return payload_from_parts(char=key.char, vk=key.vk)
         return payload_from_parts(vk=key.vk)
     return None
