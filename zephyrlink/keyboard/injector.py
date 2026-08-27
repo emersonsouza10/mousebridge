@@ -79,6 +79,16 @@ _MODIFIERS = {
     "shift_r",
 }
 
+# Virtual keys do teclado NUMÉRICO do Windows (VK_NUMPAD0..9 e operadores).
+# Quando o servidor Windows captura o numpad de forma supressiva, o caractere
+# pode não ser resolvido e a tecla chega como vk puro; num cliente não-Windows
+# esse vk não é portável, então convertemos para o caractere correspondente.
+_WIN_NUMPAD_VK = {
+    0x60: "0", 0x61: "1", 0x62: "2", 0x63: "3", 0x64: "4",
+    0x65: "5", 0x66: "6", 0x67: "7", 0x68: "8", 0x69: "9",
+    0x6A: "*", 0x6B: "+", 0x6D: "-", 0x6E: ".", 0x6F: "/",
+}
+
 # Modificadores que caracterizam um ATALHO (não a produção de um caractere).
 # Shift fica de fora: em payloads sem vk (servidor macOS) o caractere já vem
 # resolvido com o Shift aplicado (ex.: '@'), então digitá-lo por Unicode é
@@ -97,6 +107,18 @@ class KeyboardInjector:
         name = payload.get("name")
         char = payload.get("char")
         vk = payload.get("vk")
+
+        # Numpad do Windows chegando como vk puro num cliente não-Windows: o vk
+        # não é portável, então trata pelo caractere (a tecla principal produz
+        # o dígito). Só quando não há caractere já resolvido.
+        if (
+            sys.platform != "win32"
+            and not isinstance(char, str)
+            and isinstance(vk, int)
+            and vk in _WIN_NUMPAD_VK
+        ):
+            char = _WIN_NUMPAD_VK[vk]
+            kind = "char"
 
         if kind == "named" and name in _MODIFIERS:
             if pressed:
