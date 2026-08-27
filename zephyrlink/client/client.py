@@ -84,6 +84,8 @@ class ZephyrLinkClient:
 
         try:
             while not self._stopping.is_set():
+                # Sem conexão ainda: reporta "procurando" para a GUI/barra.
+                self._emit_status()
                 endpoint = await self._resolve_server()
                 if endpoint is None:
                     await self._wait_retry()

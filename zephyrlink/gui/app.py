@@ -524,7 +524,13 @@ class ZephyrLinkGUI:
         self._root.after(POLL_MS, self._poll_queues)
 
     def _apply_status(self, status: dict[str, Any]) -> None:
-        self._status_vars["connection"].set("conectado" if status.get("connected") else "desconectado")
+        if status.get("connected"):
+            conn = "conectado"
+        elif status.get("role") == "client":
+            conn = "procurando servidor…"
+        else:
+            conn = "desconectado"
+        self._status_vars["connection"].set(conn)
         self._status_vars["local_ip"].set(status.get("local_ip") or "-")
         self._status_vars["remote_ip"].set(status.get("remote_ip") or "-")
         self._status_vars["active"].set(status.get("active") or "-")
