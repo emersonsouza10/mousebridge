@@ -24,6 +24,7 @@ from typing import Any
 from zephyrlink.client import ZephyrLinkClient
 from zephyrlink.config import AppConfig
 from zephyrlink.discovery.beacon import get_local_ip
+from zephyrlink.gui.menubar import install_menubar
 from zephyrlink.mouse import get_monitors
 from zephyrlink.logging_setup import setup_logging
 
@@ -96,6 +97,7 @@ class ZephyrLinkGUI:
         self._config = config
         self._config_path = config_path
         self._core_thread: _CoreThread | None = None
+        self._menubar: Any = None
         self._monitors = get_monitors()
         self._clients_status: list[dict[str, Any]] = []
         self._client_boxes: list[tuple[int, float, float, float, float]] = []
@@ -118,12 +120,34 @@ class ZephyrLinkGUI:
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_widgets()
         self._fit_to_screen()
+        # App de barra de menus no macOS: ícone no topo, sem ícone no Dock.
+        self._menubar = install_menubar(self)
         # Com o Tk/NSApplication já ativo, pede a Acessibilidade ao macOS para o
         # sistema registrar o app correto (senão a captura de mouse/teclado não
         # funciona: "This process is not trusted!").
         from zephyrlink.keyboard.macos_compat import request_macos_accessibility
         self._root.after(500, request_macos_accessibility)
+        # Em modo cliente, conecta sozinho ao abrir.
+        self._root.after(800, self._auto_start_if_client)
         self._root.after(POLL_MS, self._poll_queues)
+
+    def _host_for_role(self, role: str) -> str:
+        """IP a exibir no campo conforme o papel.
+
+        Cliente: o IP do SERVIDOR a conectar (manual_host salvo). Servidor: o
+        IP desta máquina, apenas informativo (o servidor escuta em 0.0.0.0)."""
+        if role == "client":
+            return self._config.network.manual_host or ""
+        return get_local_ip()
+
+    def _on_role_change(self) -> None:
+        self._host_var.set(self._host_for_role(self._role_var.get()))
+
+    def _auto_start_if_client(self) -> None:
+        """Em modo cliente, conecta automaticamente ao abrir (sem clicar Iniciar)."""
+        if self._role_var.get() == "client" and self._core_thread is None:
+            logger.info("Modo cliente: iniciando automaticamente")
+            self._on_start()
 
     def _fit_to_screen(self) -> None:
         """Garante que a janela caiba na tela e fique ancorada no topo.
@@ -149,13 +173,13 @@ class ZephyrLinkGUI:
         controls.pack(fill=tk.X)
         self._role_var = tk.StringVar(value=self._config.role)
         ttk.Radiobutton(controls, text="Servidor (tem o mouse)", variable=self._role_var,
-                        value="server").grid(row=0, column=0, sticky="w")
+                        value="server", command=self._on_role_change).grid(row=0, column=0, sticky="w")
         ttk.Radiobutton(controls, text="Cliente (controlado)", variable=self._role_var,
-                        value="client").grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Label(controls, text="IP manual (cliente):").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        # Ao abrir, sempre mostra o IP atual desta máquina (o endereço do servidor
-        # nesta rede), evitando exibir um IP salvo desatualizado.
-        self._host_var = tk.StringVar(value=get_local_ip())
+                        value="client", command=self._on_role_change).grid(row=0, column=1, sticky="w", padx=8)
+        ttk.Label(controls, text="IP do servidor (cliente):").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        # Campo ciente do papel: no CLIENTE é o IP do servidor a conectar; no
+        # SERVIDOR mostra o IP desta máquina (informativo).
+        self._host_var = tk.StringVar(value=self._host_for_role(self._config.role))
         ttk.Entry(controls, textvariable=self._host_var, width=18).grid(
             row=1, column=1, sticky="w", padx=8, pady=(6, 0))
         ttk.Label(controls, text="Chave compartilhada:").grid(row=2, column=0, sticky="w", pady=(6, 0))
@@ -397,6 +421,7 @@ class ZephyrLinkGUI:
         # O núcleo é criado de forma assíncrona na thread; aplica o estado do
         # checkbox assim que ele existir.
         self._root.after(400, self._apply_edge_transfer)
+        self._sync_menubar()
         logger.info("Iniciado em modo %s", config.role)
 
     def _on_edge_transfer_toggle(self) -> None:
@@ -429,13 +454,54 @@ class ZephyrLinkGUI:
         self._start_btn.configure(state=tk.NORMAL)
         self._stop_btn.configure(state=tk.DISABLED)
         self._status_vars["connection"].set("parado")
+        self._sync_menubar()
 
     def _on_close(self) -> None:
+        # Com ícone na barra de menus, o X apenas esconde a janela — o app segue
+        # rodando em background. Sem ele, fecha de vez.
+        if self._menubar is not None:
+            self._root.withdraw()
+            return
+        self._quit()
+
+    def _quit(self) -> None:
         self._on_stop()
         # quit() sai do mainloop sem destruir as janelas: evita o caminho
         # Tk_DestroyWindow, que segfaulta no macOS. A finalização é tratada
         # em run() após o mainloop retornar.
         self._root.quit()
+
+    # --- Ações do menu da barra (disparam na main thread) ---
+    def _menubar_toggle_start(self) -> None:
+        if self._core_thread is not None:
+            self._on_stop()
+        else:
+            self._on_start()
+
+    def _menubar_show_window(self) -> None:
+        try:
+            self._root.deiconify()
+            self._root.lift()
+            self._root.attributes("-topmost", True)
+            self._root.after(300, lambda: self._root.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+        try:
+            import AppKit
+
+            AppKit.NSApp.activateIgnoringOtherApps_(True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _menubar_quit(self) -> None:
+        self._quit()
+
+    def _sync_menubar(self) -> None:
+        if self._menubar is None:
+            return
+        running = self._core_thread is not None
+        conn = self._status_vars["connection"].get()
+        self._menubar.set_state(running, f"ZephyrLink — {conn}")
 
     def _poll_queues(self) -> None:
         try:
@@ -467,6 +533,7 @@ class ZephyrLinkGUI:
         self._active = status.get("active")
         self._draw_layout()
         self._refresh_launcher()
+        self._sync_menubar()
 
     def _refresh_launcher(self) -> None:
         self._client_cid = {
