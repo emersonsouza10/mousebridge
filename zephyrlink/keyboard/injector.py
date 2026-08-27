@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 _mac_char_keycodes: dict[str, int] | None = None
 
+# Keycodes do teclado NUMÉRICO no macOS (kVK_ANSI_Keypad*). São excluídos do
+# mapa: no numpad o Shift não vira símbolo (Shift+'/' = '/', não '?'), e vários
+# desses caracteres também existem na fileira principal, onde o Shift funciona.
+_MAC_KEYPAD_KEYCODES = frozenset(
+    {65, 67, 69, 71, 75, 76, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92}
+)
+
 
 def _mac_char_keycode(char: str) -> int | None:
     """Keycode da tecla PRINCIPAL (não numpad) que produz ``char`` sem modificador.
@@ -39,6 +46,8 @@ def _mac_char_keycode(char: str) -> int | None:
 
             with keycode_context() as ctx:
                 for kc in range(128):
+                    if kc in _MAC_KEYPAD_KEYCODES:
+                        continue  # numpad não vira símbolo com Shift
                     try:
                         ch = keycode_to_string(ctx, kc, 0)
                     except Exception:  # noqa: BLE001
