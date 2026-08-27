@@ -17,6 +17,39 @@ from zephyrlink.keyboard.win32_input import caps_lock_active, send_unicode
 
 logger = logging.getLogger(__name__)
 
+_mac_char_keycodes: dict[str, int] | None = None
+
+
+def _mac_char_keycode(char: str) -> int | None:
+    """Keycode da tecla PRINCIPAL (não numpad) que produz ``char`` sem modificador.
+
+    No macOS o ``from_char`` do pynput escolhe, para dígitos, o keycode do
+    teclado numérico — e no numpad o Shift não vira símbolo (Shift+2 = '2', não
+    '@'). Reproduzir o caractere pela tecla principal faz o Shift encaminhado
+    produzir o símbolo correto. Mapa construído uma vez (menor keycode = tecla
+    principal). Retorna ``None`` fora do macOS ou se o char não estiver no mapa.
+    """
+    global _mac_char_keycodes
+    if sys.platform != "darwin":
+        return None
+    if _mac_char_keycodes is None:
+        _mac_char_keycodes = {}
+        try:
+            from pynput._util.darwin import keycode_context, keycode_to_string
+
+            with keycode_context() as ctx:
+                for kc in range(128):
+                    try:
+                        ch = keycode_to_string(ctx, kc, 0)
+                    except Exception:  # noqa: BLE001
+                        ch = None
+                    if ch and len(ch) == 1 and ch not in _mac_char_keycodes:
+                        _mac_char_keycodes[ch] = kc
+        except Exception:  # noqa: BLE001
+            logger.warning("Falha ao construir o mapa de teclas do macOS", exc_info=True)
+    return _mac_char_keycodes.get(char)
+
+
 # A captura supressiva no servidor reporta sempre o caractere sem shift
 # (teclas suprimidas não atualizam o estado assíncrono dos modificadores),
 # então com modificador ativo a via Unicode nunca pode ser usada: ela
@@ -90,8 +123,13 @@ class KeyboardInjector:
         # O vk capturado reproduz a tecla física; re-resolver o caractere
         # com VkKeyScan dependeria do layout da thread injetora e cairia
         # em Unicode literal quando não resolve (ex.: tecla ABNT_C1).
+        mac_keycode = _mac_char_keycode(char) if kind == "char" and isinstance(char, str) else None
         if kind == "char" and sys.platform == "win32" and isinstance(vk, int):
             key: Any = keyboard.KeyCode.from_vk(vk)
+        elif mac_keycode is not None:
+            # macOS: injeta pela tecla principal para o Shift/AltGr encaminhado
+            # produzir o símbolo correto (ex.: Shift+2 = '@').
+            key = keyboard.KeyCode.from_vk(mac_keycode)
         else:
             key = payload_to_key(payload)
         if key is None:
