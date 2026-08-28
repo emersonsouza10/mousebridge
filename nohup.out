@@ -1,0 +1,38 @@
+15:41:39 INFO    zephyrlink.gui.app: IP atualizado e salvo: 192.168.10.118
+15:41:49 INFO    zephyrlink.gui.app: Iniciado em modo server
+15:41:49 INFO    zephyrlink.discovery.beacon: Responder de descoberta na porta UDP 50511
+15:41:49 INFO    zephyrlink.server.server: Servidor escutando em 192.168.10.118:50510 (TLS=False, tela=3008x1692) — aguardando clientes
+15:41:49 INFO    zephyrlink.server.server: Canal de controle local em 127.0.0.1:50512 (use 'zephyrlink launch')
+15:41:49 INFO    zephyrlink.clipboard.sync: Sincronização de clipboard ativa (poll 0.5s)
+15:41:52 INFO    zephyrlink.server.server: Tela remota de 192.168.10.121: {'x': 0, 'y': 0, 'width': 3840, 'height': 2160}
+15:41:52 INFO    zephyrlink.server.server: Cliente conectado: 192.168.10.121 na borda 'right' (1 cliente(s) ativo(s))
+15:41:52 INFO    zephyrlink.server.server: Catálogo de '192.168.10.121': 5 app(s)
+15:41:52 WARNING pynput.mouse.Listener: This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients.
+15:41:52 INFO    zephyrlink.server.server: Tela remota de 192.168.10.193: {'x': 0, 'y': 0, 'width': 1920, 'height': 1080}
+15:41:52 INFO    zephyrlink.server.server: Cliente conectado: 192.168.10.193 na borda 'left' (2 cliente(s) ativo(s))
+15:41:52 WARNING pynput.mouse.Listener: This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients.
+15:57:54 INFO    zephyrlink.gui.app: Iniciado em modo server
+15:57:54 INFO    zephyrlink.discovery.beacon: Responder de descoberta na porta UDP 50511
+15:57:54 INFO    zephyrlink.server.server: Servidor escutando em 192.168.10.118:50510 (TLS=False, tela=3008x1692) — aguardando clientes
+15:57:54 INFO    zephyrlink.server.server: Canal de controle local em 127.0.0.1:50512 (use 'zephyrlink launch')
+15:57:54 INFO    zephyrlink.clipboard.sync: Sincronização de clipboard ativa (poll 0.5s)
+15:57:54 INFO    zephyrlink.server.server: Tela remota de 192.168.10.121: {'x': 0, 'y': 0, 'width': 3840, 'height': 2160}
+15:57:54 INFO    zephyrlink.server.server: Cliente conectado: 192.168.10.121 na borda 'right' (1 cliente(s) ativo(s))
+15:57:54 INFO    zephyrlink.server.server: Catálogo de '192.168.10.121': 5 app(s)
+15:57:54 WARNING pynput.mouse.Listener: This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients.
+15:57:54 INFO    zephyrlink.server.server: Tela remota de 192.168.10.193: {'x': 0, 'y': 0, 'width': 1920, 'height': 1080}
+15:57:54 INFO    zephyrlink.server.server: Cliente conectado: 192.168.10.193 na borda 'left' (2 cliente(s) ativo(s))
+15:57:54 WARNING pynput.mouse.Listener: This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients.
+16:25:24 INFO    zephyrlink.gui.app: Iniciado em modo server
+16:25:24 INFO    zephyrlink.discovery.beacon: Responder de descoberta na porta UDP 50511
+16:25:24 INFO    zephyrlink.server.server: Servidor escutando em 192.168.10.118:50510 (TLS=False, tela=3008x1692) — aguardando clientes
+16:25:24 INFO    zephyrlink.server.server: Canal de controle local em 127.0.0.1:50512 (use 'zephyrlink launch')
+16:25:24 INFO    zephyrlink.clipboard.sync: Sincronização de clipboard ativa (poll 0.5s)
+16:25:24 INFO    zephyrlink.server.server: Transferência ao tocar a borda desligada
+16:25:25 INFO    zephyrlink.server.server: Tela remota de 192.168.10.121: {'x': 0, 'y': 0, 'width': 3840, 'height': 2160}
+16:25:25 INFO    zephyrlink.server.server: Cliente conectado: 192.168.10.121 na borda 'right' (1 cliente(s) ativo(s))
+16:25:25 INFO    zephyrlink.server.server: Catálogo de '192.168.10.121': 5 app(s)
+16:25:25 WARNING pynput.mouse.Listener: This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients.
+16:25:25 INFO    zephyrlink.server.server: Tela remota de 192.168.10.193: {'x': 0, 'y': 0, 'width': 1920, 'height': 1080}
+16:25:25 INFO    zephyrlink.server.server: Cliente conectado: 192.168.10.193 na borda 'left' (2 cliente(s) ativo(s))
+16:25:25 WARNING pynput.mouse.Listener: This process is not trusted! Input event monitoring will not be possible until it is added to accessibility clients.
