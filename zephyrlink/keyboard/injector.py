@@ -108,6 +108,9 @@ class KeyboardInjector:
         char = payload.get("char")
         vk = payload.get("vk")
 
+        if pressed and logger.isEnabledFor(logging.DEBUG):
+            logger.debug("key_event kind=%s char=%r vk=%s name=%s", kind, char, vk, name)
+
         # Numpad do Windows chegando como vk puro num cliente não-Windows: o vk
         # não é portável, então trata pelo caractere (a tecla principal produz
         # o dígito). Só quando não há caractere já resolvido.

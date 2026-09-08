@@ -42,6 +42,17 @@ BUTTON_NAMES: dict[Any, str] = {
     mouse.Button.right: "right",
     mouse.Button.middle: "middle",
 }
+# Botões laterais, quando a plataforma os expõe (Windows: x1/x2; Linux:
+# button8/button9). Nomes canônicos button8/button9 para trafegar na rede e
+# poderem ser associados a ações (ex.: navegação de Spaces no macOS). No macOS o
+# pynput só conhece left/middle/right, então nada é adicionado.
+for _attr, _canonical in (
+    ("x1", "button8"), ("x2", "button9"),
+    ("button8", "button8"), ("button9", "button9"), ("button10", "button10"),
+):
+    _btn = getattr(mouse.Button, _attr, None)
+    if _btn is not None and _btn not in BUTTON_NAMES:
+        BUTTON_NAMES[_btn] = _canonical
 NAME_TO_BUTTON: dict[str, Any] = {name: btn for btn, name in BUTTON_NAMES.items()}
 
 

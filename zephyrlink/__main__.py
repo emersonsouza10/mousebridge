@@ -102,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
         return run_apps_cli(config, args.client)
 
     setup_logging(config.log_level, config.log_json)
+    from zephyrlink.platform_info import PLATFORM_NAME
+
+    logger.info("[MouseBridge] Platform detected: %s", PLATFORM_NAME)
     if config.security.shared_key == "change-me":
         logger.warning("Usando shared_key padrão; defina uma chave própria em produção")
 
