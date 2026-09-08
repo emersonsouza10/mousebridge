@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -22,6 +24,7 @@ from typing import Any
 from zephyrlink.client import ZephyrLinkClient
 from zephyrlink.config import AppConfig
 from zephyrlink.discovery.beacon import get_local_ip
+from zephyrlink.gui.menubar import install_menubar
 from zephyrlink.mouse import get_monitors
 from zephyrlink.logging_setup import setup_logging
 
@@ -75,9 +78,14 @@ class _CoreThread(threading.Thread):
         except Exception:
             logger.exception("Núcleo encerrou com erro")
 
-    def stop(self) -> None:
+    def stop(self, join_timeout: float | None = None) -> None:
         if self._core is not None:
             self._core.stop()
+        # Esperar o núcleo encerrar de fato garante que os listeners do pynput
+        # (com seus CFRunLoops) e o asyncio parem ANTES de mexer no Tk — no
+        # macOS, destruir a janela com essas threads vivas causa SIGSEGV.
+        if join_timeout is not None and self.is_alive():
+            self.join(timeout=join_timeout)
 
     @property
     def core(self) -> Any:
@@ -89,6 +97,7 @@ class ZephyrLinkGUI:
         self._config = config
         self._config_path = config_path
         self._core_thread: _CoreThread | None = None
+        self._menubar: Any = None
         self._monitors = get_monitors()
         self._clients_status: list[dict[str, Any]] = []
         self._client_boxes: list[tuple[int, float, float, float, float]] = []
@@ -102,6 +111,10 @@ class ZephyrLinkGUI:
         self._app_accepts: dict[str, bool] = {}
         self._status_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._log_queue: queue.Queue[str] = queue.Queue(maxsize=1000)
+        # Acesso remoto: uma janela de visualização por cliente e uma fila de
+        # eventos de estado (aceito/recusado/parado) vindos da thread do núcleo.
+        self._viewers: dict[int, Any] = {}
+        self._rd_events: queue.Queue[tuple[int, str, dict[str, Any]]] = queue.Queue()
 
         logging.getLogger().addHandler(_QueueLogHandler(self._log_queue))
 
@@ -110,7 +123,51 @@ class ZephyrLinkGUI:
         self._root.minsize(560, 480)
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_widgets()
+        self._fit_to_screen()
+        # App de barra de menus no macOS: ícone no topo, sem ícone no Dock.
+        self._menubar = install_menubar(self)
+        # Com o Tk/NSApplication já ativo, pede a Acessibilidade ao macOS para o
+        # sistema registrar o app correto (senão a captura de mouse/teclado não
+        # funciona: "This process is not trusted!").
+        from zephyrlink.keyboard.macos_compat import request_macos_accessibility
+        self._root.after(500, request_macos_accessibility)
+        # Em modo cliente, conecta sozinho ao abrir.
+        self._root.after(800, self._auto_start_if_client)
         self._root.after(POLL_MS, self._poll_queues)
+
+    def _host_for_role(self, role: str) -> str:
+        """IP a exibir no campo conforme o papel.
+
+        Cliente: o IP do SERVIDOR a conectar (manual_host salvo). Servidor: o
+        IP desta máquina, apenas informativo (o servidor escuta em 0.0.0.0)."""
+        if role == "client":
+            return self._config.network.manual_host or ""
+        return get_local_ip()
+
+    def _on_role_change(self) -> None:
+        self._host_var.set(self._host_for_role(self._role_var.get()))
+
+    def _auto_start_if_client(self) -> None:
+        """Em modo cliente, conecta automaticamente ao abrir (sem clicar Iniciar)."""
+        if self._role_var.get() == "client" and self._core_thread is None:
+            logger.info("Modo cliente: iniciando automaticamente")
+            self._on_start()
+
+    def _fit_to_screen(self) -> None:
+        """Garante que a janela caiba na tela e fique ancorada no topo.
+
+        Sem isso, em telas menores que a altura natural da janela (~960px) o
+        macOS centraliza verticalmente e empurra os controles do topo para
+        fora da área visível (atrás da barra de menu). Ancorar perto do topo
+        mantém os controles sempre acessíveis; a área de logs (embaixo) é a que
+        encolhe."""
+        self._root.update_idletasks()
+        margin_top, margin_bottom, margin_side = 40, 80, 60
+        screen_w = self._root.winfo_screenwidth()
+        screen_h = self._root.winfo_screenheight()
+        w = min(self._root.winfo_reqwidth(), screen_w - margin_side)
+        h = min(self._root.winfo_reqheight(), screen_h - margin_top - margin_bottom)
+        self._root.geometry(f"{max(w, 560)}x{max(h, 480)}+{margin_side // 2}+{margin_top}")
 
     def _build_widgets(self) -> None:
         main = ttk.Frame(self._root, padding=10)
@@ -120,17 +177,33 @@ class ZephyrLinkGUI:
         controls.pack(fill=tk.X)
         self._role_var = tk.StringVar(value=self._config.role)
         ttk.Radiobutton(controls, text="Servidor (tem o mouse)", variable=self._role_var,
-                        value="server").grid(row=0, column=0, sticky="w")
+                        value="server", command=self._on_role_change).grid(row=0, column=0, sticky="w")
         ttk.Radiobutton(controls, text="Cliente (controlado)", variable=self._role_var,
-                        value="client").grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Label(controls, text="IP manual (cliente):").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self._host_var = tk.StringVar(value=self._config.network.manual_host or "")
-        ttk.Entry(controls, textvariable=self._host_var, width=18).grid(row=1, column=1, sticky="w",
-                                                                        padx=8, pady=(6, 0))
+                        value="client", command=self._on_role_change).grid(row=0, column=1, sticky="w", padx=8)
+        ttk.Label(controls, text="IP do servidor (cliente):").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        # Campo ciente do papel: no CLIENTE é o IP do servidor a conectar; no
+        # SERVIDOR mostra o IP desta máquina (informativo).
+        self._host_var = tk.StringVar(value=self._host_for_role(self._config.role))
+        ttk.Entry(controls, textvariable=self._host_var, width=18).grid(
+            row=1, column=1, sticky="w", padx=8, pady=(6, 0))
         ttk.Label(controls, text="Chave compartilhada:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self._key_var = tk.StringVar(value=self._config.security.shared_key)
-        ttk.Entry(controls, textvariable=self._key_var, width=18, show="•").grid(
-            row=2, column=1, sticky="w", padx=8, pady=(6, 0))
+        key_box = ttk.Frame(controls)
+        key_box.grid(row=2, column=1, sticky="w", padx=8, pady=(6, 0))
+        self._key_entry = ttk.Entry(key_box, textvariable=self._key_var, width=18, show="•")
+        self._key_entry.pack(side=tk.LEFT)
+        self._key_shown = False
+        self._key_toggle_btn = ttk.Button(key_box, text="Mostrar", width=8,
+                                           command=self._toggle_key_visibility)
+        self._key_toggle_btn.pack(side=tk.LEFT, padx=(6, 0))
+        # Ligado por padrão: tocar a borda transfere o controle ao cliente
+        # (suprime o input local). Desmarque para manter o mouse/teclado sempre
+        # na máquina local.
+        self._edge_transfer_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(controls, text="Transferir controle ao tocar a borda",
+                        variable=self._edge_transfer_var,
+                        command=self._on_edge_transfer_toggle).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self._start_btn = ttk.Button(controls, text="Iniciar", command=self._on_start)
         self._start_btn.grid(row=0, column=2, rowspan=2, padx=12)
         self._stop_btn = ttk.Button(controls, text="Parar", command=self._on_stop, state=tk.DISABLED)
@@ -160,7 +233,7 @@ class ZephyrLinkGUI:
 
         layout_frame = ttk.LabelFrame(main, text="Posição das telas (arraste os clientes)", padding=8)
         layout_frame.pack(fill=tk.X, pady=(8, 0))
-        self._canvas = tk.Canvas(layout_frame, height=210, bg="#1e1e1e", highlightthickness=0)
+        self._canvas = tk.Canvas(layout_frame, height=170, bg="#1e1e1e", highlightthickness=0)
         self._canvas.pack(fill=tk.X)
         self._canvas.bind("<Button-1>", self._on_canvas_press)
         self._canvas.bind("<B1-Motion>", self._on_canvas_drag)
@@ -196,9 +269,15 @@ class ZephyrLinkGUI:
         self._history.grid(row=2, column=0, columnspan=4, sticky="we", pady=(8, 0))
         launcher.columnconfigure(1, weight=1)
 
+        remote = ttk.LabelFrame(main, text="Área de trabalho remota (tela + controle)", padding=8)
+        remote.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(remote, text="Abre a tela do cliente selecionado acima para ver e controlar.").pack(
+            side=tk.LEFT)
+        ttk.Button(remote, text="Ver / controlar tela", command=self._on_view_screen).pack(side=tk.RIGHT)
+
         logs = ttk.LabelFrame(main, text="Logs", padding=8)
         logs.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-        self._log_text = scrolledtext.ScrolledText(logs, height=10, state=tk.DISABLED,
+        self._log_text = scrolledtext.ScrolledText(logs, height=6, state=tk.DISABLED,
                                                    font=("Consolas", 9))
         self._log_text.pack(fill=tk.BOTH, expand=True)
 
@@ -349,7 +428,20 @@ class ZephyrLinkGUI:
         self._core_thread.start()
         self._start_btn.configure(state=tk.DISABLED)
         self._stop_btn.configure(state=tk.NORMAL)
+        # O núcleo é criado de forma assíncrona na thread; aplica o estado do
+        # checkbox assim que ele existir.
+        self._root.after(400, self._apply_edge_transfer)
+        self._sync_menubar()
         logger.info("Iniciado em modo %s", config.role)
+
+    def _on_edge_transfer_toggle(self) -> None:
+        self._apply_edge_transfer()
+
+    def _apply_edge_transfer(self) -> None:
+        """Empurra o estado do checkbox para o servidor em execução (se houver)."""
+        core = self._core_thread.core if self._core_thread else None
+        if core is not None and hasattr(core, "set_edge_transfer"):
+            core.set_edge_transfer(self._edge_transfer_var.get())
 
     def _remember_connection(self, config: AppConfig, manual: str | None) -> None:
         from zephyrlink.config.persist import save_connection
@@ -360,23 +452,79 @@ class ZephyrLinkGUI:
         except OSError:
             logger.warning("Não foi possível salvar a conexão em %s", self._config_path)
 
+    def _toggle_key_visibility(self) -> None:
+        self._key_shown = not self._key_shown
+        self._key_entry.configure(show="" if self._key_shown else "•")
+        self._key_toggle_btn.configure(text="Ocultar" if self._key_shown else "Mostrar")
+
     def _on_stop(self) -> None:
+        self._close_all_viewers()
         if self._core_thread is not None:
-            self._core_thread.stop()
+            self._core_thread.stop(join_timeout=5.0)
             self._core_thread = None
         self._start_btn.configure(state=tk.NORMAL)
         self._stop_btn.configure(state=tk.DISABLED)
         self._status_vars["connection"].set("parado")
+        self._sync_menubar()
 
     def _on_close(self) -> None:
+        # Com ícone na barra de menus, o X apenas esconde a janela — o app segue
+        # rodando em background. Sem ele, fecha de vez.
+        if self._menubar is not None:
+            self._root.withdraw()
+            return
+        self._quit()
+
+    def _quit(self) -> None:
         self._on_stop()
-        self._root.destroy()
+        # quit() sai do mainloop sem destruir as janelas: evita o caminho
+        # Tk_DestroyWindow, que segfaulta no macOS. A finalização é tratada
+        # em run() após o mainloop retornar.
+        self._root.quit()
+
+    # --- Ações do menu da barra (disparam na main thread) ---
+    def _menubar_toggle_start(self) -> None:
+        if self._core_thread is not None:
+            self._on_stop()
+        else:
+            self._on_start()
+
+    def _menubar_show_window(self) -> None:
+        try:
+            self._root.deiconify()
+            self._root.lift()
+            self._root.attributes("-topmost", True)
+            self._root.after(300, lambda: self._root.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+        try:
+            import AppKit
+
+            AppKit.NSApp.activateIgnoringOtherApps_(True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _menubar_quit(self) -> None:
+        self._quit()
+
+    def _sync_menubar(self) -> None:
+        if self._menubar is None:
+            return
+        running = self._core_thread is not None
+        conn = self._status_vars["connection"].get()
+        self._menubar.set_state(running, f"ZephyrLink — {conn}")
 
     def _poll_queues(self) -> None:
         try:
             while True:
                 status = self._status_queue.get_nowait()
                 self._apply_status(status)
+        except queue.Empty:
+            pass
+        try:
+            while True:
+                cid, state, info = self._rd_events.get_nowait()
+                self._handle_rd_event(cid, state, info)
         except queue.Empty:
             pass
         lines: list[str] = []
@@ -393,7 +541,13 @@ class ZephyrLinkGUI:
         self._root.after(POLL_MS, self._poll_queues)
 
     def _apply_status(self, status: dict[str, Any]) -> None:
-        self._status_vars["connection"].set("conectado" if status.get("connected") else "desconectado")
+        if status.get("connected"):
+            conn = "conectado"
+        elif status.get("role") == "client":
+            conn = "procurando servidor…"
+        else:
+            conn = "desconectado"
+        self._status_vars["connection"].set(conn)
         self._status_vars["local_ip"].set(status.get("local_ip") or "-")
         self._status_vars["remote_ip"].set(status.get("remote_ip") or "-")
         self._status_vars["active"].set(status.get("active") or "-")
@@ -402,6 +556,7 @@ class ZephyrLinkGUI:
         self._active = status.get("active")
         self._draw_layout()
         self._refresh_launcher()
+        self._sync_menubar()
 
     def _refresh_launcher(self) -> None:
         self._client_cid = {
@@ -506,8 +661,104 @@ class ZephyrLinkGUI:
         if core is not None and cid is not None and app_id and hasattr(core, "launch_app"):
             core.launch_app(cid, app_id, args)
 
+    # --- Área de trabalho remota (tela + controle) ---
+    def _on_view_screen(self) -> None:
+        from tkinter import messagebox
+
+        core = self._core_thread.core if self._core_thread is not None else None
+        if core is None or not hasattr(core, "start_remote_desktop"):
+            messagebox.showinfo(
+                "Indisponível",
+                "Inicie em modo Servidor e conecte um cliente primeiro.",
+                parent=self._root,
+            )
+            return
+        cid = self._client_cid.get(self._app_client_var.get())
+        if cid is None:
+            messagebox.showinfo(
+                "Selecione um cliente",
+                "Escolha um cliente na seção 'Aplicações remotas'.",
+                parent=self._root,
+            )
+            return
+        existing = self._viewers.get(cid)
+        if existing is not None:
+            existing.win.lift()
+            return
+
+        from zephyrlink.remotedesktop.viewer import ScreenViewer
+
+        core.set_frame_sink(self._on_frame)
+        core.set_rd_state_callback(self._on_rd_state)
+        quality = self._config.remote_desktop.quality
+        label = self._app_client_var.get()
+        viewer = ScreenViewer(
+            self._root,
+            f"Tela remota — {label}",
+            on_move=lambda xr, yr, c=cid: core.rd_move(c, xr, yr),
+            on_button=lambda name, pressed, c=cid: core.rd_button(c, name, pressed),
+            on_scroll=lambda dx, dy, c=cid: core.rd_scroll(c, dx, dy),
+            on_key=lambda payload, pressed, c=cid: core.rd_key(c, payload, pressed),
+            on_quality=lambda q, c=cid: core.rd_set_config(c, quality=q),
+            on_close=lambda c=cid: self._on_viewer_close(c),
+            initial_quality=quality,
+        )
+        self._viewers[cid] = viewer
+        core.start_remote_desktop(cid, {"quality": quality})
+        logger.info("Solicitando acesso remoto ao cliente cid=%s", cid)
+
+    def _on_viewer_close(self, cid: int) -> None:
+        self._viewers.pop(cid, None)
+        core = self._core_thread.core if self._core_thread is not None else None
+        if core is not None and hasattr(core, "stop_remote_desktop"):
+            core.stop_remote_desktop(cid)
+
+    def _on_frame(self, cid: int, blob: bytes) -> None:
+        """Sink de frames (roda na thread do núcleo). push_frame é thread-safe."""
+        viewer = self._viewers.get(cid)
+        if viewer is not None:
+            viewer.push_frame(blob)
+
+    def _on_rd_state(self, cid: int, state: str, info: dict[str, Any]) -> None:
+        """Estado da sessão remota (thread do núcleo) → fila drenada no Tk."""
+        self._rd_events.put_nowait((cid, state, info))
+
+    def _handle_rd_event(self, cid: int, state: str, info: dict[str, Any]) -> None:
+        viewer = self._viewers.get(cid)
+        if viewer is None:
+            return
+        if state == "accepted":
+            viewer.set_status("conectado")
+        elif state == "rejected":
+            from tkinter import messagebox
+
+            reason = info.get("reason", "?")
+            self._viewers.pop(cid, None)
+            viewer.close()
+            messagebox.showwarning(
+                "Acesso remoto recusado",
+                f"O cliente recusou o compartilhamento: {reason}",
+                parent=self._root,
+            )
+        elif state == "stopped":
+            self._viewers.pop(cid, None)
+            viewer.close()
+
+    def _close_all_viewers(self) -> None:
+        for viewer in list(self._viewers.values()):
+            viewer.close()
+        self._viewers.clear()
+
     def run(self) -> None:
         self._root.mainloop()
+        # macOS: com módulos pyobjc/pynput carregados, a finalização normal do
+        # Tcl/Tk pode segfaultar (Tk_DestroyWindow). O encerramento funcional já
+        # ocorreu em _on_close (núcleo parado, captura encerrada); um os._exit
+        # limpo pula essa finalização problemática.
+        if sys.platform == "darwin":
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)
 
 
 def run_gui(config: AppConfig, config_path: str = "config.yaml") -> None:

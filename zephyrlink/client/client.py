@@ -17,14 +17,16 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from zephyrlink.clipboard.sync import ClipboardSync
 from zephyrlink.clipboard.transfer import send_files
-from zephyrlink.config import AppConfig
+from zephyrlink.config import AppConfig, RemoteDesktopConfig
 from zephyrlink.discovery import discover_server
 from zephyrlink.discovery.beacon import get_local_ip
 from zephyrlink.keyboard.layout import activate_layout
+from zephyrlink.keyboard.spaces import run_space_action
 from zephyrlink.launcher import (
     AppCatalog,
     ArgError,
@@ -37,6 +39,10 @@ from zephyrlink.launcher import (
     verify_executable,
 )
 from zephyrlink.mouse import MonitorLayout, ScreenInfo, entry_position, opposite_edge
+from zephyrlink.platform_info import IS_MACOS
+from zephyrlink.remotedesktop.consent import ask_consent
+from zephyrlink.remotedesktop.coords import ratio_to_abs
+from zephyrlink.remotedesktop.session import RemoteDesktopSession
 from zephyrlink.transport import Message, MessageStream, MsgType
 from zephyrlink.transport.security import build_client_ssl_context, sign_challenge
 
@@ -65,11 +71,22 @@ class ZephyrLinkClient:
         self._return_edge: str | None = None
         self._server_layout: str | None = None
         self._stopping = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # Sessão de acesso remoto (tela + controle). Ativa quando o operador
+        # inicia e o dono desta máquina consente.
+        self._rd_session: RemoteDesktopSession | None = None
+        self._rd_active = False
+        self._rd_panic: Any = None  # pynput GlobalHotKeys (tecla de pânico)
+        # Botão -> ação (só surte efeito no macOS; ver keyboard/spaces.py).
+        self._mouse_actions: dict[str, str] = dict(config.mouse_actions)
+        if IS_MACOS and self._mouse_actions:
+            logger.info("[MouseBridge] macOS Space navigation enabled: %s", self._mouse_actions)
 
     async def run(self) -> None:
         from zephyrlink.keyboard.injector import KeyboardInjector
         from zephyrlink.mouse.injector import MouseInjector
 
+        self._loop = asyncio.get_running_loop()
         self._refresh_geometry()
         assert self._screen is not None and self._layout is not None
         self._mouse = MouseInjector(self._layout)
@@ -78,8 +95,11 @@ class ZephyrLinkClient:
             "Cliente iniciado (tela=%dx%d, %d monitor(es))",
             self._screen.width, self._screen.height, len(self._layout.monitors),
         )
-
+        # Manter a máquina acordada é feito por sessão em _keep_awake_loop
+        # (configurável via network.keep_awake), enquanto conectado.
         while not self._stopping.is_set():
+            # Sem conexão ainda: reporta "procurando" para a GUI/barra.
+            self._emit_status()
             endpoint = await self._resolve_server()
             if endpoint is None:
                 await self._wait_retry()
@@ -162,6 +182,7 @@ class ZephyrLinkClient:
                 task.cancel()
 
     async def _teardown_session(self) -> None:
+        await self._stop_rd()
         self._clipboard.stop()
         if self._keyboard is not None:
             self._keyboard.release_all()
@@ -174,15 +195,36 @@ class ZephyrLinkClient:
     async def _receive_loop(self, stream: MessageStream) -> None:
         while True:
             message = await stream.receive()
+            if not isinstance(message, Message):
+                # Frames de vídeo são enviados pelo ALVO, não recebidos por ele.
+                logger.debug("Frame binário inesperado no cliente; ignorado")
+                continue
             match message.type:
                 case MsgType.MOUSE_MOVE:
                     self._handle_move(int(message.data["dx"]), int(message.data["dy"]))
-                case MsgType.MOUSE_BUTTON if self._active:
-                    self._mouse.button(str(message.data["button"]), bool(message.data["pressed"]))
-                case MsgType.MOUSE_SCROLL if self._active:
+                case MsgType.MOUSE_BUTTON if self._active or self._rd_active:
+                    self._mark_rd_input()
+                    self._handle_button(str(message.data["button"]), bool(message.data["pressed"]))
+                case MsgType.MOUSE_SCROLL if self._active or self._rd_active:
+                    self._mark_rd_input()
                     self._mouse.scroll(int(message.data["dx"]), int(message.data["dy"]))
-                case MsgType.KEY_EVENT if self._active:
+                case MsgType.KEY_EVENT if self._active or self._rd_active:
+                    self._mark_rd_input()
                     self._keyboard.key_event(message.data["key"], bool(message.data["pressed"]))
+                case MsgType.INPUT_MOVE_ABS if self._rd_active:
+                    self._mark_rd_input()
+                    self._handle_input_abs(float(message.data["x"]), float(message.data["y"]))
+                case MsgType.RD_START:
+                    await self._handle_rd_start(stream, message.data)
+                case MsgType.RD_STOP:
+                    await self._stop_rd()
+                case MsgType.VIDEO_CONFIG:
+                    if self._rd_session is not None:
+                        self._rd_session.update_config(
+                            fps=message.data.get("fps"),
+                            quality=message.data.get("quality"),
+                            scale=message.data.get("scale"),
+                        )
                 case MsgType.ENTER:
                     self._handle_enter(str(message.data["edge"]), float(message.data["ratio"]))
                 case MsgType.CLIPBOARD:
@@ -208,6 +250,17 @@ class ZephyrLinkClient:
         self._active = True
         logger.info("Controle recebido (entrada pela borda %s)", self._return_edge)
         self._emit_status()
+
+    def _handle_button(self, name: str, pressed: bool) -> None:
+        """Botão do mouse: no macOS, se estiver mapeado em ``mouse_actions``,
+        executa a ação (ex.: navegação de Space) uma vez no *press*; caso
+        contrário injeta o botão normalmente. Fora do macOS, sempre injeta."""
+        action = self._mouse_actions.get(name) if IS_MACOS else None
+        if action is not None:
+            if pressed:
+                run_space_action(action)  # dispara uma vez; release é ignorado
+            return
+        self._mouse.button(name, pressed)
 
     def _handle_move(self, dx: int, dy: int) -> None:
         if not self._active:
@@ -242,6 +295,124 @@ class ZephyrLinkClient:
             await self._stream.send(Message(MsgType.LEAVE, {"ratio": ratio}))
         self._emit_status()
 
+    # ---- Acesso remoto (tela + controle) -------------------------------
+    def _mark_rd_input(self) -> None:
+        if self._rd_session is not None:
+            self._rd_session.mark_input()
+
+    def _handle_input_abs(self, x_ratio: float, y_ratio: float) -> None:
+        """Posiciona o cursor a partir de uma razão [0,1] da região capturada."""
+        if self._rd_session is None:
+            return
+        left, top, width, height = self._rd_session.region
+        x, y = ratio_to_abs(x_ratio, y_ratio, left, top, width, height)
+        self._mouse.set_position(x, y)
+
+    def _effective_rd_config(self, data: dict[str, Any]) -> RemoteDesktopConfig:
+        """Config da sessão: parte do YAML do alvo, aceitando parâmetros pedidos
+        pelo operador dentro dos limites (o alvo é quem manda)."""
+        rd = self._config.remote_desktop
+
+        def _num(key: str, lo: float, hi: float, default: float) -> float:
+            try:
+                return max(lo, min(hi, type(default)(data[key])))
+            except (KeyError, TypeError, ValueError):
+                return default
+
+        return replace(
+            rd,
+            fps=int(_num("fps", 1, 60, rd.fps)),
+            quality=int(_num("quality", 1, 95, rd.quality)),
+            scale=float(_num("scale", 0.05, 1.0, rd.scale)),
+            monitor=max(0, int(_num("monitor", 0, 64, rd.monitor))),
+        )
+
+    async def _handle_rd_start(self, stream: MessageStream, data: dict[str, Any]) -> None:
+        rd = self._config.remote_desktop
+        host = stream.peer_host
+
+        async def reject(reason: str) -> None:
+            logger.info("Acesso remoto recusado (%s) para %s", reason, host)
+            with contextlib.suppress(ConnectionError, OSError):
+                await stream.send(Message(MsgType.RD_REJECT, {"reason": reason}))
+
+        if not rd.enabled:
+            await reject("desabilitado")
+            return
+        if not self._config.security.use_tls and not rd.allow_insecure:
+            logger.warning(
+                "Acesso remoto recusado: conexão sem TLS. Habilite security.use_tls "
+                "ou, por sua conta e risco, remote_desktop.allow_insecure."
+            )
+            await reject("sem_tls")
+            return
+        if self._rd_active:
+            await reject("ja_ativo")
+            return
+        if rd.require_consent and not await ask_consent(host):
+            await reject("negado_pelo_usuario")
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            session = RemoteDesktopSession(
+                loop, stream, self._effective_rd_config(data), host, on_idle_stop=self._request_rd_stop
+            )
+            await session.start()
+        except Exception as exc:  # noqa: BLE001 - captura/codec indisponível
+            logger.error("Falha ao iniciar acesso remoto: %s", exc)
+            await reject("falha_captura")
+            return
+        self._rd_session = session
+        self._rd_active = True
+        self._start_panic_hotkey()
+        with contextlib.suppress(ConnectionError, OSError):
+            await stream.send(Message(MsgType.RD_ACCEPT, {"region": list(session.region)}))
+        self._emit_status()
+
+    async def _stop_rd(self, notify: bool = False) -> None:
+        self._stop_panic_hotkey()
+        session, self._rd_session = self._rd_session, None
+        was_active, self._rd_active = self._rd_active, False
+        if session is not None:
+            await session.stop()
+            if self._keyboard is not None:
+                self._keyboard.release_all()
+        if notify and self._stream is not None:
+            with contextlib.suppress(ConnectionError, OSError):
+                await self._stream.send(Message(MsgType.RD_STOP, {}))
+        if was_active:
+            self._emit_status()
+
+    def _request_rd_stop(self) -> None:
+        """Encerra a sessão por causa interna (idle/falha) e avisa o operador.
+
+        Chamado da thread do loop (idle) ou via call_soon_threadsafe (captura)."""
+        asyncio.create_task(self._stop_rd(notify=True))
+
+    def _start_panic_hotkey(self) -> None:
+        """Ctrl+Alt+Esc no ALVO encerra o compartilhamento imediatamente."""
+        try:
+            from pynput import keyboard
+        except Exception:  # noqa: BLE001 - sem pynput não há hotkey, mas RD segue
+            return
+        try:
+            self._rd_panic = keyboard.GlobalHotKeys({"<ctrl>+<alt>+<esc>": self._panic_rd})
+            self._rd_panic.start()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Não foi possível registrar a tecla de pânico: %s", exc)
+            self._rd_panic = None
+
+    def _stop_panic_hotkey(self) -> None:
+        hotkey, self._rd_panic = self._rd_panic, None
+        if hotkey is not None:
+            with contextlib.suppress(Exception):
+                hotkey.stop()
+
+    def _panic_rd(self) -> None:
+        logger.warning("Tecla de pânico: encerrando o compartilhamento de tela")
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._request_rd_stop)
+
     async def _watchdog_loop(self, stream: MessageStream) -> None:
         """Fecha a conexão se o servidor parar de enviar PINGs."""
         timeout = self._config.network.heartbeat_timeout
@@ -254,8 +425,12 @@ class ZephyrLinkClient:
                 return
 
     async def _keep_awake_loop(self) -> None:
-        """Impede o Windows de suspender, apagar a tela ou bloquear a sessão
-        enquanto o cliente está conectado."""
+        """Impede suspender, apagar a tela ou bloquear a sessão enquanto o
+        cliente está conectado (Windows e macOS; no-op nos demais).
+
+        ``keep_awake`` reafirma o estado a cada ciclo (necessário no Windows) e,
+        no macOS, garante o token de atividade; ``nudge`` zera o cronômetro de
+        ociosidade no Windows (no-op fora)."""
         from zephyrlink import keepawake
 
         try:
@@ -414,5 +589,6 @@ class ZephyrLinkClient:
                 "remote_ip": self._stream.peer_host if self._stream else None,
                 "active": "esta máquina" if self._active else "servidor",
                 "edge": self._return_edge,
+                "rd_active": self._rd_active,
             }
         )

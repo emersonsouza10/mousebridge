@@ -38,9 +38,10 @@ from zephyrlink.config import AppConfig
 from zephyrlink.config.settings import VALID_EDGES
 from zephyrlink.discovery import DiscoveryResponder
 from zephyrlink.discovery.beacon import get_local_ip
+from zephyrlink.keepawake import allow_sleep, prevent_sleep
 from zephyrlink.launcher.catalog import resolve_app_ref
 from zephyrlink.mouse import EdgeDetector, ScreenInfo, get_virtual_screen, return_position
-from zephyrlink.transport import Message, MessageStream, MsgType, coalesce_moves
+from zephyrlink.transport import Message, MessageStream, MsgType, VideoFrame, coalesce_moves
 from zephyrlink.transport.security import (
     build_server_ssl_context,
     host_allowed,
@@ -51,10 +52,31 @@ from zephyrlink.transport.security import (
 logger = logging.getLogger(__name__)
 
 StatusCallback = Callable[[dict[str, Any]], None]
+#: (cid, blob JPEG) de cada frame recebido de um cliente em sessão remota.
+FrameSink = Callable[[int, bytes], None]
+#: (cid, state, info) — state em {"accepted", "rejected", "stopped"}.
+RdStateCallback = Callable[[int, str, dict[str, Any]], None]
 
 
 # Ordem em que bordas livres são atribuídas a clientes que conectam.
 ASSIGN_ORDER = ("right", "left", "bottom", "top")
+
+# Tecla de pânico (no servidor): força o retorno do controle ao Mac mesmo com o
+# input suprimido em modo forward. É consumida pela captura supressiva, então
+# não vaza para o cliente nem para apps locais. Ctrl+Alt+Esc não é atalho de
+# sistema no macOS (o Force Quit é Cmd+Alt+Esc), logo não conflita.
+PANIC_TRIGGER = "esc"
+PANIC_MODS = frozenset({"ctrl", "alt"})
+
+
+def _modifier_family(name: str | None) -> str | None:
+    """Agrupa ctrl_l/ctrl_r → 'ctrl', alt_l/alt_gr → 'alt', etc."""
+    if not name:
+        return None
+    for fam in ("ctrl", "alt", "shift", "cmd"):
+        if name.startswith(fam):
+            return fam
+    return None
 
 
 @dataclass(slots=True)
@@ -70,18 +92,29 @@ class ClientSession:
     edge: str | None = None
     catalog: list[dict[str, str]] = field(default_factory=list)
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    # Sessão de acesso remoto (tela + controle) ativa com este cliente.
+    rd_active: bool = False
 
 
 class ZephyrLinkServer:
     def __init__(self, config: AppConfig, on_status: StatusCallback | None = None) -> None:
         self._config = config
         self._on_status = on_status
+        self._frame_sink: FrameSink | None = None
+        self._on_rd_state: RdStateCallback | None = None
         self._screen: ScreenInfo | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._clients: dict[int, ClientSession] = {}
         self._edges: dict[str, int] = {}
         self._next_cid: int = 0
         self._active_edge: str | None = None
+        # Transferência ao tocar a borda ligada por padrão: encostar na borda de
+        # um cliente passa o controle a ele. Pode ser desligada em tempo real
+        # (ver set_edge_transfer / checkbox na GUI) para manter o cursor local.
+        self._edge_transfer_enabled: bool = True
+        # Modificadores pressionados no momento (para detectar a tecla de pânico
+        # enquanto o teclado está sendo encaminhado em modo forward).
+        self._held_mods: set[str] = set()
         self._event_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=2048)
         self._mouse_capture: Any = None
         self._keyboard_capture: Any = None
@@ -130,11 +163,15 @@ class ZephyrLinkServer:
         )
         sender = asyncio.create_task(self._sender_loop(), name="sender")
         self._clipboard.start(self._on_local_clipboard, self._on_local_files)
+        # Impede o Mac de dormir/bloquear enquanto serve (fica ocioso do ponto
+        # de vista do sistema porque o input local é suprimido/vai ao cliente).
+        prevent_sleep("ZephyrLink servidor ativo")
         self._emit_status()
 
         try:
             await self._stopping.wait()
         finally:
+            allow_sleep()
             sender.cancel()
             server.close()
             control.close()
@@ -168,7 +205,7 @@ class ZephyrLinkServer:
             return
 
         self._clients[session.cid] = session
-        edge = self._first_free_edge()
+        edge = self._edge_for_new_client(host)
         if edge is not None:
             self._edges[edge] = session.cid
             session.edge = edge
@@ -222,6 +259,8 @@ class ZephyrLinkServer:
         session = self._clients.pop(cid, None)
         if session is None:
             return
+        if session.rd_active:
+            self._notify_rd(cid, "stopped", {"reason": "desconectado"})
         for task in session.tasks:
             task.cancel()
         await session.stream.close()
@@ -238,11 +277,34 @@ class ZephyrLinkServer:
         )
         self._emit_status()
 
-    def _first_free_edge(self) -> str | None:
+    def _first_free_edge(self, avoid: frozenset[str] = frozenset()) -> str | None:
+        # Prefere bordas livres não reservadas a outro cliente; se todas as
+        # livres estiverem reservadas, cai para qualquer uma livre.
+        for edge in ASSIGN_ORDER:
+            if edge not in self._edges and edge not in avoid:
+                return edge
         for edge in ASSIGN_ORDER:
             if edge not in self._edges:
                 return edge
         return None
+
+    def _preferred_edge(self, host: str) -> str | None:
+        """Borda fixada para este host em ``layout.client_edges``, se houver."""
+        for pattern, edge in self._config.layout.client_edges:
+            if host_allowed(host, (pattern,)):
+                return edge
+        return None
+
+    def _reserved_edges(self) -> frozenset[str]:
+        return frozenset(edge for _, edge in self._config.layout.client_edges)
+
+    def _edge_for_new_client(self, host: str) -> str | None:
+        """Borda a atribuir a um cliente que conecta: a fixada (se livre), senão
+        a primeira livre que não esteja reservada a outro host."""
+        preferred = self._preferred_edge(host)
+        if preferred is not None and preferred not in self._edges:
+            return preferred
+        return self._first_free_edge(avoid=self._reserved_edges())
 
     def assign_edge(self, cid: int, edge: str | None) -> None:
         """Reatribui (ou desencaixa) um cliente a uma borda. Thread-safe:
@@ -290,26 +352,43 @@ class ZephyrLinkServer:
         self._loop.call_soon_threadsafe(self._schedule_enter_remote, edge, ratio)
 
     def _schedule_enter_remote(self, edge: str, ratio: float) -> None:
+        if not self._edge_transfer_enabled:
+            return  # transferência automática desligada; cursor fica local
         if self._active_edge is None and edge in self._edges:
             asyncio.create_task(self._enter_remote(edge, ratio))
+
+    def set_edge_transfer(self, enabled: bool) -> None:
+        """Liga/desliga a transferência de controle ao tocar a borda.
+
+        Thread-safe: pode ser chamado da GUI (main thread) enquanto o núcleo
+        roda na thread do loop. Desligar não interrompe uma sessão remota já
+        ativa (use o retorno normal ou 'Parar' para isso)."""
+        self._edge_transfer_enabled = bool(enabled)
+        logger.info(
+            "Transferência ao tocar a borda %s", "ligada" if enabled else "desligada"
+        )
 
     async def _enter_remote(self, edge: str, ratio: float) -> None:
         if self._active_edge is not None or edge not in self._edges:
             return
         session = self._clients[self._edges[edge]]
         self._active_edge = edge
-        logger.info("Controle transferido para cliente '%s' (ratio=%.2f)", edge, ratio)
+        logger.info(
+            "Controle transferido para cliente '%s' (ratio=%.2f) — Ctrl+Alt+Esc devolve ao Mac",
+            edge, ratio,
+        )
         try:
             await session.stream.send(Message(MsgType.ENTER, {"edge": edge, "ratio": ratio}))
         except (ConnectionError, OSError):
             self._active_edge = None
             return
+        self._held_mods.clear()
         self._mouse_capture.start_forward(
             on_move=self._forward(MsgType.MOUSE_MOVE, "dx", "dy"),
             on_button=self._forward(MsgType.MOUSE_BUTTON, "button", "pressed"),
             on_scroll=self._forward(MsgType.MOUSE_SCROLL, "dx", "dy"),
         )
-        self._keyboard_capture.start(self._forward(MsgType.KEY_EVENT, "key", "pressed"))
+        self._keyboard_capture.start(self._forward_key)
         self._emit_status()
 
     async def _return_to_local(self, ratio: float) -> None:
@@ -317,6 +396,7 @@ class ZephyrLinkServer:
             return
         edge = self._active_edge
         self._active_edge = None
+        self._held_mods.clear()
         self._keyboard_capture.stop()
         assert self._screen is not None
         x, y = return_position(
@@ -337,6 +417,35 @@ class ZephyrLinkServer:
             loop.call_soon_threadsafe(self._enqueue_event, message)
 
         return callback
+
+    def _forward_key(self, payload: dict[str, Any], pressed: bool) -> None:
+        """Encaminha teclas ao cliente, mas intercepta a tecla de pânico.
+
+        Roda na thread do listener supressivo: a combinação de pânico é
+        consumida aqui (não vai ao cliente nem ao macOS local) e agenda o
+        retorno do controle no loop."""
+        name = payload.get("name") if payload.get("kind") == "named" else None
+        fam = _modifier_family(name)
+        if fam is not None:
+            if pressed:
+                self._held_mods.add(fam)
+            else:
+                self._held_mods.discard(fam)
+        if pressed and name == PANIC_TRIGGER and PANIC_MODS <= self._held_mods:
+            logger.warning("Tecla de pânico (Ctrl+Alt+Esc): devolvendo o controle ao Mac")
+            self._held_mods.clear()
+            assert self._loop is not None
+            self._loop.call_soon_threadsafe(self._panic_return)
+            return  # consome; não encaminha
+        assert self._loop is not None
+        self._loop.call_soon_threadsafe(
+            self._enqueue_event,
+            Message(MsgType.KEY_EVENT, {"key": payload, "pressed": pressed}),
+        )
+
+    def _panic_return(self) -> None:
+        if self._active_edge is not None:
+            asyncio.create_task(self._return_to_local(0.5))
 
     def _enqueue_event(self, message: Message) -> None:
         try:
@@ -368,7 +477,27 @@ class ZephyrLinkServer:
     async def _receive_loop(self, session: ClientSession) -> None:
         while True:
             message = await session.stream.receive()
+            if isinstance(message, VideoFrame):
+                if session.rd_active and self._frame_sink is not None:
+                    self._frame_sink(session.cid, message.blob)
+                continue
             match message.type:
+                case MsgType.RD_ACCEPT:
+                    session.rd_active = True
+                    logger.info("Acesso remoto aceito por '%s'", session.host)
+                    self._notify_rd(session.cid, "accepted", message.data)
+                    self._emit_status()
+                case MsgType.RD_REJECT:
+                    session.rd_active = False
+                    reason = str(message.data.get("reason", "?"))
+                    logger.info("Acesso remoto recusado por '%s': %s", session.host, reason)
+                    self._notify_rd(session.cid, "rejected", message.data)
+                    self._emit_status()
+                case MsgType.RD_STOP:
+                    session.rd_active = False
+                    logger.info("Cliente '%s' encerrou o acesso remoto", session.host)
+                    self._notify_rd(session.cid, "stopped", message.data)
+                    self._emit_status()
                 case MsgType.LEAVE:
                     if self._active_edge == session.edge:
                         await self._return_to_local(float(message.data.get("ratio", 0.5)))
@@ -565,11 +694,64 @@ class ZephyrLinkServer:
         finally:
             await stream.close()
 
+    # ---- Acesso remoto (tela + controle) -------------------------------
+    def set_frame_sink(self, sink: FrameSink | None) -> None:
+        """Registra o destino dos frames recebidos (a GUI/viewer)."""
+        self._frame_sink = sink
+
+    def set_rd_state_callback(self, callback: RdStateCallback | None) -> None:
+        """Registra o callback de mudanças de estado da sessão remota."""
+        self._on_rd_state = callback
+
+    def _notify_rd(self, cid: int, state: str, info: dict[str, Any]) -> None:
+        if self._on_rd_state is not None:
+            self._on_rd_state(cid, state, dict(info))
+
+    def start_remote_desktop(self, cid: int, params: dict[str, Any] | None = None) -> None:
+        """Pede ao cliente para iniciar a sessão de tela. Thread-safe (GUI)."""
+        self._send_threadsafe(cid, Message(MsgType.RD_START, dict(params or {})))
+
+    def stop_remote_desktop(self, cid: int) -> None:
+        self._send_threadsafe(cid, Message(MsgType.RD_STOP, {}))
+
+    def rd_move(self, cid: int, x_ratio: float, y_ratio: float) -> None:
+        self._send_threadsafe(cid, Message(MsgType.INPUT_MOVE_ABS, {"x": x_ratio, "y": y_ratio}))
+
+    def rd_button(self, cid: int, name: str, pressed: bool) -> None:
+        self._send_threadsafe(cid, Message(MsgType.MOUSE_BUTTON, {"button": name, "pressed": pressed}))
+
+    def rd_scroll(self, cid: int, dx: int, dy: int) -> None:
+        self._send_threadsafe(cid, Message(MsgType.MOUSE_SCROLL, {"dx": dx, "dy": dy}))
+
+    def rd_key(self, cid: int, payload: dict[str, Any], pressed: bool) -> None:
+        self._send_threadsafe(cid, Message(MsgType.KEY_EVENT, {"key": payload, "pressed": pressed}))
+
+    def rd_set_config(self, cid: int, **fields: Any) -> None:
+        data = {k: v for k, v in fields.items() if v is not None}
+        if data:
+            self._send_threadsafe(cid, Message(MsgType.VIDEO_CONFIG, data))
+
+    def _send_threadsafe(self, cid: int, message: Message) -> None:
+        """Agenda o envio de uma mensagem a um cliente a partir de outra thread."""
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._dispatch_send, cid, message)
+
+    def _dispatch_send(self, cid: int, message: Message) -> None:
+        session = self._clients.get(cid)
+        if session is not None:
+            asyncio.create_task(self._safe_send(session, message))
+
+    @staticmethod
+    async def _safe_send(session: ClientSession, message: Message) -> None:
+        with contextlib.suppress(ConnectionError, OSError):
+            await session.stream.send(message)
+
     def _emit_status(self) -> None:
         if self._on_status is None:
             return
         clients = [
-            {"cid": s.cid, "host": s.host, "edge": s.edge, "screen": s.screen, "catalog": s.catalog}
+            {"cid": s.cid, "host": s.host, "edge": s.edge, "screen": s.screen,
+             "catalog": s.catalog, "rd_active": s.rd_active}
             for s in self._clients.values()
         ]
         self._on_status(

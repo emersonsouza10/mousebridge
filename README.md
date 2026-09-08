@@ -24,6 +24,10 @@ retorna.
 - **Teclado**: encaminhamento completo de eventos, incluindo combinações
   (Ctrl+C/V/X/Z, Alt+Tab, Win+R, F1–F12). Na máquina principal o input é suprimido
   enquanto o controle está remoto.
+- **Acesso remoto (tela + controle)**: ver e controlar a tela de um cliente numa janela,
+  estilo RDP — mas **sem** usar a Área de Trabalho Remota do Windows, então funciona mesmo
+  em máquinas com o RDP desabilitado. Consentimento no alvo, indicador visível e
+  criptografia (ver [Acesso remoto tipo RDP](#acesso-remoto-tipo-rdp)).
 - **Clipboard**: sincronização automática bidirecional (opcional).
 - **Rede**: TCP para eventos, descoberta automática por broadcast UDP, reconexão
   automática, heartbeat para detecção de queda, IP manual como fallback.
@@ -36,7 +40,8 @@ retorna.
 
 - Python **3.12+**
 - Windows 11 (alvo principal; funciona também em Linux/macOS com as ressalvas do pynput)
-- Dependências: `pynput`, `pyautogui`, `pyperclip`, `PyYAML`
+- Dependências: `pynput`, `pyautogui`, `pyperclip`, `PyYAML`, `mss`, `Pillow`
+  (as duas últimas só são usadas pelo acesso remoto de tela)
 
 ## Instalação
 
@@ -186,6 +191,57 @@ e aponte `audit_file` para um caminho `.jsonl` para registrar cada decisão (ace
 recusada, concluída, falha) com carimbo de tempo. Ambos são opt-in e ficam desligados
 por padrão.
 
+### Acesso remoto tipo RDP
+
+Além de encaminhar mouse/teclado, o ZephyrLink pode **exibir a tela de um cliente numa
+janela e controlá-la** — como um RDP/VNC. A diferença importante: ele **não usa a Área de
+Trabalho Remota (RDP/Terminal Services) do Windows**. A tela é capturada pelo framebuffer
+(`mss`) e o input é injetado em espaço de usuário (`pynput`), exatamente como TeamViewer/
+AnyDesk. Por isso **funciona mesmo em máquinas com o RDP desabilitado**.
+
+Papéis (reaproveitam os de sempre):
+
+- **Operador** = `server` (tem o mouse/teclado; abre a janela e controla). Inicia a sessão.
+- **Alvo** = `client` (é visto/controlado). Precisa habilitar e consentir.
+
+**No alvo** (`config.yaml`):
+
+```yaml
+security:
+  use_tls: true            # os frames expõem a tela — criptografia é exigida
+  # ... tls_cert / tls_key (ver a seção TLS)
+remote_desktop:
+  enabled: true            # desligado por padrão; o alvo é quem autoriza
+  require_consent: true    # pede confirmação antes de cada sessão
+  fps: 12
+  quality: 60              # JPEG; o operador pode ajustar em runtime
+  scale: 1.0               # reduza (ex.: 0.5) para economizar banda
+  # idle_timeout: 300      # encerra sozinho após N s ociosos (0 = desligado)
+  # audit_file: rd.jsonl   # registra início/fim das sessões
+```
+
+**No operador**: abra a GUI em modo servidor (`zephyrlink gui`), conecte o cliente,
+selecione-o em *Aplicações remotas* e clique **"Ver / controlar tela"**. O alvo mostra um
+pedido de consentimento; ao aceitar, a janela exibe a tela remota e o mouse/teclado
+passam a operá-la. Um controle deslizante ajusta a qualidade; "Desconectar" encerra.
+
+Salvaguardas de segurança (o "de forma segura"):
+
+- **Opt-in no alvo** (`enabled: false` por padrão) e **consentimento** por sessão.
+- **Criptografia obrigatória**: sem `security.use_tls` a sessão é **recusada**, a menos que
+  você assuma o risco com `remote_desktop.allow_insecure: true` (rede confiável).
+- Reusa a **autenticação HMAC** e a **allowlist de hosts** do handshake normal.
+- **Indicador visível** no alvo enquanto compartilha + **auditoria** opt-in.
+- **Tecla de pânico** no alvo (**Ctrl+Alt+Esc**) encerra o compartilhamento na hora;
+  `idle_timeout` e a queda da conexão também encerram.
+- **Somente LAN** (descoberta/allowlist); não há relay/NAT pela internet.
+
+> Use apenas em máquinas que você administra ou tem autorização para acessar.
+
+No **macOS** o alvo precisa conceder, além de *Acessibilidade* (para injetar input),
+a permissão de *Gravação de Tela* (Ajustes → Privacidade e Segurança → Gravação de Tela)
+ao app/terminal — sem ela a captura devolve quadros em branco.
+
 ### Arquivo de configuração
 
 Tudo pode ser definido em YAML. O repositório traz
@@ -213,6 +269,54 @@ security:
 ```
 
 Flags de linha de comando (`--key`, `--port`, `--edge`, `--host`) sobrepõem o YAML.
+
+### macOS — Spaces e Mission Control
+
+No macOS é possível associar **botões do mouse** aos atalhos nativos de
+navegação entre Mesas/Spaces. As ações rodam na máquina macOS por injeção de
+teclado (a mesma biblioteca já usada, `pynput`) — **Windows e Linux não são
+afetados** e continuam com o comportamento normal.
+
+Ações disponíveis:
+
+| Ação | Atalho enviado | Efeito |
+|------|----------------|--------|
+| `mac_space_left` | Control + ← | Space anterior |
+| `mac_space_right` | Control + → | Próximo Space |
+| `mac_mission_control` | Control + ↑ | Abre o Mission Control |
+| `mac_space_1` … `mac_space_4` | Control + 1 … 4 | Vai direto para a Mesa 1–4 |
+
+**Como associar aos botões (no `config.yaml` da máquina macOS):**
+
+```yaml
+mouse_actions:
+  button8: mac_space_left     # botão lateral "voltar"
+  button9: mac_space_right    # botão lateral "avançar"
+  button10: mac_mission_control
+```
+
+Os nomes `button8`/`button9`/`button10` são os botões laterais capturados no
+**servidor** (Windows/Linux) e encaminhados; no macOS eles disparam a ação em
+vez de serem injetados como clique. Botões não mapeados seguem funcionando
+normalmente. O `pynput` no macOS só reconhece os botões esquerdo/meio/direito,
+então o gatilho dos botões laterais vem de um servidor Windows/Linux que os
+possui.
+
+**Requisitos e permissões:**
+
+- **Acessibilidade** (obrigatória): Ajustes do Sistema → Privacidade e
+  Segurança → **Acessibilidade** → adicione o app (o próprio ZephyrLink pede
+  essa permissão ao abrir). Sem ela a injeção não surte efeito; o programa
+  **não trava nem encerra** — registra um aviso e libera o Control.
+- **Monitoramento de Entrada**: Ajustes do Sistema → Privacidade e Segurança →
+  **Monitoramento de Entrada** — necessária para a captura/injeção de eventos
+  do ZephyrLink em geral.
+- **`Control + 1..4`**: precisam estar **habilitados** em Ajustes do Sistema →
+  Teclado → Atalhos de Teclado → **Mission Control** (por padrão a Apple os
+  deixa desligados). As setas (`Control + ←/→/↑`) já vêm habilitadas.
+
+As teclas modificadoras são **sempre liberadas** ao final (inclusive se ocorrer
+erro), então o Control nunca fica virtualmente preso.
 
 ### Firewall (Windows 11)
 
@@ -305,6 +409,10 @@ thread-safe drenadas via `after()`; o núcleo nunca chama widgets diretamente.
 | `LEAVE` | cliente → servidor | razão: controle volta ao servidor |
 | `CLIPBOARD` | ambas | texto da área de transferência |
 | `FILE_OFFER` / `FILE_DATA` / `FILE_END` | ambas | manifesto + pedaços (base64) + fim de uma transferência de arquivos |
+| `RD_START` / `RD_ACCEPT` / `RD_REJECT` / `RD_STOP` | negociação | pedido do operador / consentimento do alvo / fim da sessão de tela |
+| `VIDEO_CONFIG` | servidor → cliente | ajuste de fps/qualidade/escala em runtime |
+| `VIDEO_FRAME` | cliente → servidor | frame de tela (**binário**: tag `0x01` + meta JSON + JPEG) |
+| `INPUT_MOVE_ABS` | servidor → cliente | posição absoluta do cursor (razão `[0,1]` da tela remota) |
 | `PING` / `PONG` | ambas | heartbeat |
 
 ## Testes
@@ -313,11 +421,13 @@ thread-safe drenadas via `after()`; o núcleo nunca chama widgets diretamente.
 python -m unittest discover -s tests -v
 ```
 
-A suíte (81 casos) cobre framing incremental, (de)serialização do protocolo,
-autenticação HMAC, allowlist, carregamento/validação de configuração, detecção de borda
-(incluindo multi-monitor com origem negativa e mapeamento entre resoluções), pacotes de
-descoberta e um handshake de autenticação completo sobre TCP real em loopback. Os testes
-não exigem display nem as bibliotecas de input instaladas.
+A suíte cobre framing incremental (incluindo frames binários de vídeo),
+(de)serialização do protocolo, autenticação HMAC, allowlist, carregamento/validação de
+configuração, detecção de borda (incluindo multi-monitor com origem negativa e mapeamento
+entre resoluções), pacotes de descoberta, um handshake de autenticação completo sobre TCP
+real em loopback e, para o acesso remoto, o mapeamento de coordenadas razão↔absoluta, a
+tradução de teclas do viewer e o gate de consentimento/TLS do alvo. Os testes não exigem
+display nem as bibliotecas de input/captura instaladas.
 
 ## Limitações conhecidas
 
@@ -329,6 +439,9 @@ não exigem display nem as bibliotecas de input instaladas.
 - `Ctrl+Alt+Del` e a tela de bloqueio não são capturáveis (restrição do sistema).
 - Topologia em estrela: a máquina principal no centro e um cliente por borda (até quatro
   secundárias). Não há modo cadeia (atravessar um cliente para chegar a outro).
+- Acesso remoto de tela: usa Motion-JPEG (um JPEG por quadro), pensado para suporte em
+  LAN — sem diff por tiles/codec de vídeo, sem áudio e sem relay pela internet. A janela
+  de controle roda pela GUI (modo servidor); não há visualizador headless.
 
 ## Fases de desenvolvimento
 
@@ -340,6 +453,7 @@ não exigem display nem as bibliotecas de input instaladas.
 | 4 | Descoberta automática (broadcast UDP) + reconexão + heartbeat | ✅ |
 | 5 | Interface gráfica (Tkinter) | ✅ |
 | 6 | Otimização e testes (fila com backpressure, suíte de testes) | ✅ |
+| 7 | Acesso remoto tipo RDP (captura de tela, controle absoluto, consentimento) | ✅ |
 
 ## Licença
 

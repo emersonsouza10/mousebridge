@@ -57,6 +57,11 @@ def main(argv: list[str] | None = None) -> int:
     from zephyrlink.mouse import enable_dpi_awareness
 
     enable_dpi_awareness()
+    # macOS: pré-computa o layout de teclado na main thread para o pynput não
+    # abortar (SIGTRAP) ao consultá-lo na thread do núcleo (ver macos_compat).
+    from zephyrlink.keyboard.macos_compat import install_macos_pynput_layout_fix
+
+    install_macos_pynput_layout_fix()
     config_path = args.config
     if config_path is None and Path("config.yaml").exists():
         config_path = "config.yaml"
@@ -97,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
         return run_apps_cli(config, args.client)
 
     setup_logging(config.log_level, config.log_json)
+    from zephyrlink.platform_info import PLATFORM_NAME
+
+    logger.info("[MouseBridge] Platform detected: %s", PLATFORM_NAME)
     if config.security.shared_key == "change-me":
         logger.warning("Usando shared_key padrão; defina uma chave própria em produção")
 

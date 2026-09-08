@@ -9,6 +9,7 @@ venv/
 .mypy_cache/
 .coverage
 *.log
+nohup.out
 # certificados TLS locais
 *.key
 *.crt

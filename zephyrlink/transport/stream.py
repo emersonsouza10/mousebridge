@@ -9,7 +9,7 @@ import socket
 import time
 
 from zephyrlink.transport.framing import encode_frame, read_frame, write_frame
-from zephyrlink.transport.messages import Message
+from zephyrlink.transport.messages import Message, VideoFrame, is_video_frame
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +64,22 @@ class MessageStream:
                 self._writer.write(encode_frame(message.encode()))
             await self._writer.drain()
 
-    async def receive(self) -> Message:
+    async def send_frame(self, frame: VideoFrame) -> None:
+        """Envia um frame binário de vídeo sob o mesmo lock dos Messages."""
+        async with self._send_lock:
+            await write_frame(self._writer, frame.encode())
+
+    async def receive(self) -> Message | VideoFrame:
+        """Recebe a próxima unidade do stream.
+
+        Devolve um ``VideoFrame`` quando o payload é binário (1º byte 0x01) ou
+        um ``Message`` para o JSON de controle. Os laços de recepção verificam
+        o tipo com ``isinstance``.
+        """
         payload = await read_frame(self._reader)
         self.last_received = time.monotonic()
+        if is_video_frame(payload):
+            return VideoFrame.decode(payload)
         return Message.decode(payload)
 
     async def close(self) -> None:
