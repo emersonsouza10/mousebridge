@@ -6,6 +6,7 @@ from zephyrlink.config.settings import (
     LauncherConfig,
     LayoutConfig,
     NetworkConfig,
+    RemoteDesktopConfig,
     SecurityConfig,
     load_config,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "LauncherConfig",
     "LayoutConfig",
     "NetworkConfig",
+    "RemoteDesktopConfig",
     "SecurityConfig",
     "load_config",
 ]

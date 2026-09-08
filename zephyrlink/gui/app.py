@@ -111,6 +111,10 @@ class ZephyrLinkGUI:
         self._app_accepts: dict[str, bool] = {}
         self._status_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._log_queue: queue.Queue[str] = queue.Queue(maxsize=1000)
+        # Acesso remoto: uma janela de visualização por cliente e uma fila de
+        # eventos de estado (aceito/recusado/parado) vindos da thread do núcleo.
+        self._viewers: dict[int, Any] = {}
+        self._rd_events: queue.Queue[tuple[int, str, dict[str, Any]]] = queue.Queue()
 
         logging.getLogger().addHandler(_QueueLogHandler(self._log_queue))
 
@@ -264,6 +268,12 @@ class ZephyrLinkGUI:
             self._history.column(col, width=width, anchor="w")
         self._history.grid(row=2, column=0, columnspan=4, sticky="we", pady=(8, 0))
         launcher.columnconfigure(1, weight=1)
+
+        remote = ttk.LabelFrame(main, text="Área de trabalho remota (tela + controle)", padding=8)
+        remote.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(remote, text="Abre a tela do cliente selecionado acima para ver e controlar.").pack(
+            side=tk.LEFT)
+        ttk.Button(remote, text="Ver / controlar tela", command=self._on_view_screen).pack(side=tk.RIGHT)
 
         logs = ttk.LabelFrame(main, text="Logs", padding=8)
         logs.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
@@ -448,6 +458,7 @@ class ZephyrLinkGUI:
         self._key_toggle_btn.configure(text="Ocultar" if self._key_shown else "Mostrar")
 
     def _on_stop(self) -> None:
+        self._close_all_viewers()
         if self._core_thread is not None:
             self._core_thread.stop(join_timeout=5.0)
             self._core_thread = None
@@ -508,6 +519,12 @@ class ZephyrLinkGUI:
             while True:
                 status = self._status_queue.get_nowait()
                 self._apply_status(status)
+        except queue.Empty:
+            pass
+        try:
+            while True:
+                cid, state, info = self._rd_events.get_nowait()
+                self._handle_rd_event(cid, state, info)
         except queue.Empty:
             pass
         lines: list[str] = []
@@ -643,6 +660,94 @@ class ZephyrLinkGUI:
         args = [text] if text else []
         if core is not None and cid is not None and app_id and hasattr(core, "launch_app"):
             core.launch_app(cid, app_id, args)
+
+    # --- Área de trabalho remota (tela + controle) ---
+    def _on_view_screen(self) -> None:
+        from tkinter import messagebox
+
+        core = self._core_thread.core if self._core_thread is not None else None
+        if core is None or not hasattr(core, "start_remote_desktop"):
+            messagebox.showinfo(
+                "Indisponível",
+                "Inicie em modo Servidor e conecte um cliente primeiro.",
+                parent=self._root,
+            )
+            return
+        cid = self._client_cid.get(self._app_client_var.get())
+        if cid is None:
+            messagebox.showinfo(
+                "Selecione um cliente",
+                "Escolha um cliente na seção 'Aplicações remotas'.",
+                parent=self._root,
+            )
+            return
+        existing = self._viewers.get(cid)
+        if existing is not None:
+            existing.win.lift()
+            return
+
+        from zephyrlink.remotedesktop.viewer import ScreenViewer
+
+        core.set_frame_sink(self._on_frame)
+        core.set_rd_state_callback(self._on_rd_state)
+        quality = self._config.remote_desktop.quality
+        label = self._app_client_var.get()
+        viewer = ScreenViewer(
+            self._root,
+            f"Tela remota — {label}",
+            on_move=lambda xr, yr, c=cid: core.rd_move(c, xr, yr),
+            on_button=lambda name, pressed, c=cid: core.rd_button(c, name, pressed),
+            on_scroll=lambda dx, dy, c=cid: core.rd_scroll(c, dx, dy),
+            on_key=lambda payload, pressed, c=cid: core.rd_key(c, payload, pressed),
+            on_quality=lambda q, c=cid: core.rd_set_config(c, quality=q),
+            on_close=lambda c=cid: self._on_viewer_close(c),
+            initial_quality=quality,
+        )
+        self._viewers[cid] = viewer
+        core.start_remote_desktop(cid, {"quality": quality})
+        logger.info("Solicitando acesso remoto ao cliente cid=%s", cid)
+
+    def _on_viewer_close(self, cid: int) -> None:
+        self._viewers.pop(cid, None)
+        core = self._core_thread.core if self._core_thread is not None else None
+        if core is not None and hasattr(core, "stop_remote_desktop"):
+            core.stop_remote_desktop(cid)
+
+    def _on_frame(self, cid: int, blob: bytes) -> None:
+        """Sink de frames (roda na thread do núcleo). push_frame é thread-safe."""
+        viewer = self._viewers.get(cid)
+        if viewer is not None:
+            viewer.push_frame(blob)
+
+    def _on_rd_state(self, cid: int, state: str, info: dict[str, Any]) -> None:
+        """Estado da sessão remota (thread do núcleo) → fila drenada no Tk."""
+        self._rd_events.put_nowait((cid, state, info))
+
+    def _handle_rd_event(self, cid: int, state: str, info: dict[str, Any]) -> None:
+        viewer = self._viewers.get(cid)
+        if viewer is None:
+            return
+        if state == "accepted":
+            viewer.set_status("conectado")
+        elif state == "rejected":
+            from tkinter import messagebox
+
+            reason = info.get("reason", "?")
+            self._viewers.pop(cid, None)
+            viewer.close()
+            messagebox.showwarning(
+                "Acesso remoto recusado",
+                f"O cliente recusou o compartilhamento: {reason}",
+                parent=self._root,
+            )
+        elif state == "stopped":
+            self._viewers.pop(cid, None)
+            viewer.close()
+
+    def _close_all_viewers(self) -> None:
+        for viewer in list(self._viewers.values()):
+            viewer.close()
+        self._viewers.clear()
 
     def run(self) -> None:
         self._root.mainloop()

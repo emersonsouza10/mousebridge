@@ -21,6 +21,19 @@ VALID_ROLES = ("server", "client")
 VALID_PLATFORMS = ("windows", "linux", "macos")
 VALID_ARG_KINDS = ("none", "url", "path_in_dir", "enum")
 
+# Ações de navegação de Spaces/Mission Control (macOS) associáveis a botões do
+# mouse via ``mouse_actions``. Definidas aqui (camada de config, sem depender do
+# pynput) e reutilizadas pelo executor em keyboard/spaces.py.
+VALID_MOUSE_ACTIONS = (
+    "mac_space_left",
+    "mac_space_right",
+    "mac_mission_control",
+    "mac_space_1",
+    "mac_space_2",
+    "mac_space_3",
+    "mac_space_4",
+)
+
 
 class ConfigError(Exception):
     """Configuração inválida ou ilegível."""
@@ -111,6 +124,30 @@ class LauncherConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RemoteDesktopConfig:
+    """Acesso remoto tipo RDP (tela + controle). Configurado no CLIENTE, que é a
+    máquina-alvo: ele decide se aceita ser compartilhado.
+
+    Desligado por padrão (``enabled=False``). Como os frames expõem o conteúdo
+    da tela, a sessão é recusada sem TLS a menos que ``allow_insecure=True``. O
+    operador (servidor) inicia a sessão; o cliente pede consentimento local
+    (``require_consent``) antes de transmitir e mostra um indicador enquanto
+    compartilha.
+    """
+
+    enabled: bool = False
+    require_consent: bool = True
+    fps: int = 12
+    quality: int = 60           # qualidade JPEG (1-95)
+    scale: float = 1.0          # fator de redução (0 < scale <= 1)
+    monitor: int = 0            # 0 = todos os monitores (tela virtual); 1..N = físico
+    idle_timeout: float = 0.0   # 0 = desligado; encerra a sessão após N s ociosos
+    allow_insecure: bool = False  # permite compartilhar sem TLS (NÃO recomendado)
+    indicator: bool = True      # mostra o aviso "tela sendo compartilhada" no alvo
+    audit_file: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     role: str = "server"
     name: str = "zephyrlink"
@@ -121,6 +158,27 @@ class AppConfig:
     layout: LayoutConfig = field(default_factory=LayoutConfig)
     clipboard: ClipboardConfig = field(default_factory=ClipboardConfig)
     launcher: LauncherConfig = field(default_factory=LauncherConfig)
+    remote_desktop: RemoteDesktopConfig = field(default_factory=RemoteDesktopConfig)
+    # Botão do mouse -> ação (ex.: {"button9": "mac_space_right"}). Só tem efeito
+    # no macOS (ver keyboard/spaces.py); ignorado no Windows/Linux.
+    mouse_actions: dict[str, str] = field(default_factory=dict)
+
+
+def _parse_mouse_actions(raw: Any) -> dict[str, str]:
+    """Valida o mapa ``mouse_actions`` {nome_do_botão: ação}."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("mouse_actions deve ser um mapa {botão: ação}")
+    out: dict[str, str] = {}
+    for button, action in raw.items():
+        action_l = str(action).lower()
+        if action_l not in VALID_MOUSE_ACTIONS:
+            raise ConfigError(
+                f"mouse_actions[{button!r}]: ação inválida {action!r} (use {VALID_MOUSE_ACTIONS})"
+            )
+        out[str(button)] = action_l
+    return out
 
 
 def _section(raw: dict[str, Any], key: str) -> dict[str, Any]:
@@ -236,6 +294,7 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
     layout = _section(raw, "layout")
     clip = _section(raw, "clipboard")
     launcher = _section(raw, "launcher")
+    rdesk = _section(raw, "remote_desktop")
 
     config = AppConfig(
         role=str(raw.get("role", "server")),
@@ -274,6 +333,19 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
             file_max_bytes=int(clip.get("file_max_bytes", 200_000_000)),
         ),
         launcher=_build_launcher(launcher),
+        remote_desktop=RemoteDesktopConfig(
+            enabled=bool(rdesk.get("enabled", False)),
+            require_consent=bool(rdesk.get("require_consent", True)),
+            fps=int(rdesk.get("fps", 12)),
+            quality=int(rdesk.get("quality", 60)),
+            scale=float(rdesk.get("scale", 1.0)),
+            monitor=int(rdesk.get("monitor", 0)),
+            idle_timeout=float(rdesk.get("idle_timeout", 0.0)),
+            allow_insecure=bool(rdesk.get("allow_insecure", False)),
+            indicator=bool(rdesk.get("indicator", True)),
+            audit_file=str(rdesk["audit_file"]) if rdesk.get("audit_file") else None,
+        ),
+        mouse_actions=_parse_mouse_actions(raw.get("mouse_actions")),
     )
 
     if config.role not in VALID_ROLES:
@@ -292,6 +364,17 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
         raise ConfigError("security.use_tls exige tls_cert e tls_key")
     if not config.security.shared_key:
         raise ConfigError("security.shared_key não pode ser vazio")
+    rd = config.remote_desktop
+    if not (1 <= rd.fps <= 60):
+        raise ConfigError(f"remote_desktop.fps fora do intervalo [1, 60]: {rd.fps}")
+    if not (1 <= rd.quality <= 95):
+        raise ConfigError(f"remote_desktop.quality fora do intervalo [1, 95]: {rd.quality}")
+    if not (0.0 < rd.scale <= 1.0):
+        raise ConfigError(f"remote_desktop.scale deve estar em (0, 1]: {rd.scale}")
+    if rd.monitor < 0:
+        raise ConfigError(f"remote_desktop.monitor não pode ser negativo: {rd.monitor}")
+    if rd.idle_timeout < 0:
+        raise ConfigError(f"remote_desktop.idle_timeout não pode ser negativo: {rd.idle_timeout}")
     return config
 
 
