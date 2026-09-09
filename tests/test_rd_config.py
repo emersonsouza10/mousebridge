@@ -5,16 +5,27 @@ from zephyrlink.config.settings import ConfigError, build_config
 
 class RemoteDesktopConfigTest(unittest.TestCase):
     def test_defaults(self) -> None:
+        # Frota administrada em LAN: remoto ligado, sem consentimento e sem TLS
+        # por padrão (o acesso é gated pela shared_key).
         rd = build_config({}).remote_desktop
-        self.assertFalse(rd.enabled)
-        self.assertTrue(rd.require_consent)
+        self.assertTrue(rd.enabled)
+        self.assertFalse(rd.require_consent)
         self.assertEqual(rd.fps, 12)
         self.assertEqual(rd.quality, 60)
         self.assertEqual(rd.scale, 1.0)
         self.assertEqual(rd.monitor, 0)
-        self.assertFalse(rd.allow_insecure)
+        self.assertTrue(rd.allow_insecure)
         self.assertTrue(rd.indicator)
         self.assertIsNone(rd.audit_file)
+
+    def test_can_still_opt_out(self) -> None:
+        # Um cliente pode desligar explicitamente ou reexigir consentimento/TLS.
+        rd = build_config(
+            {"remote_desktop": {"enabled": False, "require_consent": True, "allow_insecure": False}}
+        ).remote_desktop
+        self.assertFalse(rd.enabled)
+        self.assertTrue(rd.require_consent)
+        self.assertFalse(rd.allow_insecure)
 
     def test_full_section(self) -> None:
         rd = build_config(

@@ -100,21 +100,21 @@ launcher:
 
 # Acesso remoto tipo RDP (tela + controle). NÃO usa o RDP/Área de Trabalho
 # Remota do Windows — captura o framebuffer (mss) e injeta input em espaço de
-# usuário, então funciona mesmo com o RDP desabilitado. Configure no CLIENTE
-# (máquina-alvo): ele decide se aceita ser compartilhado. O operador usa a GUI
+# usuário, então funciona mesmo com o RDP desabilitado. O operador usa a GUI
 # em modo servidor: seleciona o cliente e clica "Ver / controlar tela".
-# Desligado por padrão.
+# LIGADO por padrão numa frota em LAN — o acesso é gated pela shared_key. Para
+# blindar uma máquina específica, ponha 'enabled: false' no config.yaml dela.
 remote_desktop:
-  enabled: false          # o alvo precisa habilitar para poder ser compartilhado
-  require_consent: true   # pede confirmação no alvo antes de cada sessão
+  enabled: true           # o alvo aceita ser visto/controlado (padrão)
+  require_consent: false  # não pede confirmação no alvo a cada sessão (padrão)
   fps: 12                 # quadros por segundo (1-60)
   quality: 60             # qualidade JPEG (1-95); o operador pode ajustar em runtime
   scale: 1.0              # fator de redução da resolução (0 < scale <= 1) p/ economizar banda
   monitor: 0              # 0 = todos os monitores (tela virtual); 1..N = um monitor físico
   idle_timeout: 0         # segundos sem input para encerrar sozinho; 0 = desligado
-  # Os frames expõem a tela: por segurança a sessão é RECUSADA sem TLS. Ligue
-  # security.use_tls (recomendado) ou, por sua conta e risco em rede confiável,
-  # allow_insecure para permitir sem criptografia.
-  allow_insecure: false
+  # Os frames expõem a tela. Por padrão allow_insecure=true: roda sem TLS, mas
+  # os frames trafegam SEM criptografia (ok em rede confiável). Para criptografar,
+  # ligue security.use_tls; para exigir TLS, ponha allow_insecure: false.
+  allow_insecure: true
   indicator: true         # mostra a faixa "tela sendo compartilhada" no alvo
   audit_file: null        # opt-in: .jsonl com início/fim das sessões; null = desligado

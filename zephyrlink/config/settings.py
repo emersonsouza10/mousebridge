@@ -128,21 +128,23 @@ class RemoteDesktopConfig:
     """Acesso remoto tipo RDP (tela + controle). Configurado no CLIENTE, que é a
     máquina-alvo: ele decide se aceita ser compartilhado.
 
-    Desligado por padrão (``enabled=False``). Como os frames expõem o conteúdo
-    da tela, a sessão é recusada sem TLS a menos que ``allow_insecure=True``. O
-    operador (servidor) inicia a sessão; o cliente pede consentimento local
-    (``require_consent``) antes de transmitir e mostra um indicador enquanto
-    compartilha.
+    Ligado por padrão (``enabled=True``) e sem pedir consentimento a cada sessão
+    (``require_consent=False``), para uso numa frota administrada em LAN — quem
+    controla o acesso é a ``shared_key`` (autenticação HMAC no handshake). Como
+    ``allow_insecure=True`` por padrão, a sessão roda mesmo sem TLS: os frames
+    (conteúdo da tela) trafegam SEM criptografia — adequado a rede confiável;
+    para criptografar, configure ``security.use_tls``. O operador (servidor)
+    inicia a sessão; o cliente mostra um indicador enquanto compartilha.
     """
 
-    enabled: bool = False
-    require_consent: bool = True
+    enabled: bool = True
+    require_consent: bool = False
     fps: int = 12
     quality: int = 60           # qualidade JPEG (1-95)
     scale: float = 1.0          # fator de redução (0 < scale <= 1)
     monitor: int = 0            # 0 = todos os monitores (tela virtual); 1..N = físico
     idle_timeout: float = 0.0   # 0 = desligado; encerra a sessão após N s ociosos
-    allow_insecure: bool = False  # permite compartilhar sem TLS (NÃO recomendado)
+    allow_insecure: bool = True   # permite compartilhar sem TLS (rede confiável)
     indicator: bool = True      # mostra o aviso "tela sendo compartilhada" no alvo
     audit_file: str | None = None
 
@@ -334,14 +336,14 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
         ),
         launcher=_build_launcher(launcher),
         remote_desktop=RemoteDesktopConfig(
-            enabled=bool(rdesk.get("enabled", False)),
-            require_consent=bool(rdesk.get("require_consent", True)),
+            enabled=bool(rdesk.get("enabled", True)),
+            require_consent=bool(rdesk.get("require_consent", False)),
             fps=int(rdesk.get("fps", 12)),
             quality=int(rdesk.get("quality", 60)),
             scale=float(rdesk.get("scale", 1.0)),
             monitor=int(rdesk.get("monitor", 0)),
             idle_timeout=float(rdesk.get("idle_timeout", 0.0)),
-            allow_insecure=bool(rdesk.get("allow_insecure", False)),
+            allow_insecure=bool(rdesk.get("allow_insecure", True)),
             indicator=bool(rdesk.get("indicator", True)),
             audit_file=str(rdesk["audit_file"]) if rdesk.get("audit_file") else None,
         ),

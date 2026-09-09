@@ -202,17 +202,23 @@ AnyDesk. Por isso **funciona mesmo em máquinas com o RDP desabilitado**.
 Papéis (reaproveitam os de sempre):
 
 - **Operador** = `server` (tem o mouse/teclado; abre a janela e controla). Inicia a sessão.
-- **Alvo** = `client` (é visto/controlado). Precisa habilitar e consentir.
+- **Alvo** = `client` (é visto/controlado). Vem habilitado por padrão numa frota em LAN.
 
-**No alvo** (`config.yaml`):
+**Padrão (frota em LAN)**: o alvo já vem com `remote_desktop.enabled: true`,
+`require_consent: false` e `allow_insecure: true` — ou seja, **funciona sem configurar
+nada** além da `shared_key`, que é quem controla o acesso. Os frames trafegam **sem
+criptografia**; use só em rede confiável.
+
+**Para blindar/ajustar um alvo** (`config.yaml`):
 
 ```yaml
 security:
-  use_tls: true            # os frames expõem a tela — criptografia é exigida
-  # ... tls_cert / tls_key (ver a seção TLS)
+  use_tls: true            # criptografa os frames (ver a seção TLS)
+  # ... tls_cert / tls_key
 remote_desktop:
-  enabled: true            # desligado por padrão; o alvo é quem autoriza
-  require_consent: true    # pede confirmação antes de cada sessão
+  # enabled: false         # desliga o remoto NESTA máquina
+  # require_consent: true  # volta a pedir confirmação antes de cada sessão
+  # allow_insecure: false  # exige TLS (recusa sem criptografia)
   fps: 12
   quality: 60              # JPEG; o operador pode ajustar em runtime
   scale: 1.0               # reduza (ex.: 0.5) para economizar banda
@@ -221,15 +227,19 @@ remote_desktop:
 ```
 
 **No operador**: abra a GUI em modo servidor (`zephyrlink gui`), conecte o cliente,
-selecione-o em *Aplicações remotas* e clique **"Ver / controlar tela"**. O alvo mostra um
-pedido de consentimento; ao aceitar, a janela exibe a tela remota e o mouse/teclado
-passam a operá-la. Um controle deslizante ajusta a qualidade; "Desconectar" encerra.
+selecione-o em *Aplicações remotas* e clique **"Ver / controlar tela"**. Por padrão o alvo
+aceita sem pedir confirmação; a janela exibe a tela remota e o mouse/teclado passam a
+operá-la. Um controle deslizante ajusta a qualidade; "Desconectar" encerra. (Se o alvo
+tiver `require_consent: true`, ele mostra um pedido de permissão antes.)
 
 Salvaguardas de segurança (o "de forma segura"):
 
-- **Opt-in no alvo** (`enabled: false` por padrão) e **consentimento** por sessão.
-- **Criptografia obrigatória**: sem `security.use_tls` a sessão é **recusada**, a menos que
-  você assuma o risco com `remote_desktop.allow_insecure: true` (rede confiável).
+- **Gated pela `shared_key`**: só um servidor com a chave (autenticação HMAC no handshake)
+  inicia a sessão. Troque a `shared_key` padrão. Um alvo pode reexigir consentimento
+  (`require_consent: true`) ou se desligar (`enabled: false`).
+- **Criptografia opcional**: por padrão roda sem TLS (`allow_insecure: true`, frames em
+  claro). Ligue `security.use_tls` para criptografar; `allow_insecure: false` passa a
+  **recusar** sessões sem TLS.
 - Reusa a **autenticação HMAC** e a **allowlist de hosts** do handshake normal.
 - **Indicador visível** no alvo enquanto compartilha + **auditoria** opt-in.
 - **Tecla de pânico** no alvo (**Ctrl+Alt+Esc**) encerra o compartilhamento na hora;
