@@ -122,3 +122,52 @@ def allow_sleep() -> None:
         _win_set_execution_state(ES_CONTINUOUS)
     elif sys.platform == "darwin":
         _mac_allow()
+
+
+# --- Detecção de ociosidade -------------------------------------------------
+def idle_seconds() -> float | None:
+    """Segundos desde o último input do usuário (mouse/teclado).
+
+    Windows: ``GetLastInputInfo``. macOS: ``CGEventSourceSecondsSinceLastEventType``
+    (Quartz). Devolve ``None`` onde não há como medir (Linux, ou falha) — o
+    chamador trata ``None`` como "mantenha acordado" (comportamento seguro).
+
+    Atenção (Windows): o toque de :func:`nudge` (SendInput) TAMBÉM zera esse
+    contador, então logo após um nudge a ociosidade lida cai para ~0.
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        class _LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+        info = _LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        try:
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+                return None
+            millis = ctypes.windll.kernel32.GetTickCount() - info.dwTime
+        except (OSError, AttributeError):
+            return None
+        return max(0.0, millis / 1000.0)
+    if sys.platform == "darwin":
+        try:
+            import Quartz
+
+            return float(
+                Quartz.CGEventSourceSecondsSinceLastEventType(
+                    Quartz.kCGEventSourceStateCombinedSessionState,
+                    Quartz.kCGAnyInputEventType,
+                )
+            )
+        except Exception:  # noqa: BLE001 - sem Quartz/falha => sem medição
+            return None
+    return None
+
+
+def should_keep_awake(idle: float | None, idle_threshold: float) -> bool:
+    """Decide se deve manter a máquina acordada agora.
+
+    Mantém acordado só quando ociosa há ``idle_threshold`` segundos ou mais. Sem
+    medição de ociosidade (``idle is None``), mantém acordado (seguro)."""
+    return idle is None or idle >= idle_threshold

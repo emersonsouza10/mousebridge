@@ -15,8 +15,9 @@ network:
   heartbeat_timeout: 8.0
   reconnect_delay: 3.0
   discovery_timeout: 5.0
-  keep_awake: true          # cliente: impede suspender/apagar tela/bloquear enquanto conectado
-  keep_awake_interval: 30.0 # intervalo (s) do toque anti-ociosidade (Windows)
+  keep_awake: true               # cliente: mantém acordado enquanto conectado — só quando ocioso
+  keep_awake_idle_threshold: 180 # só age após N s SEM uso (padrão 180 = 3 min); < bloqueio do SO
+  keep_awake_interval: 30.0      # cadência (s) de verificação da ociosidade
 
 security:
   shared_key: change-me # OBRIGATÓRIO trocar: mesma chave nas duas máquinas

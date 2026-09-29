@@ -425,19 +425,30 @@ class ZephyrLinkClient:
                 return
 
     async def _keep_awake_loop(self) -> None:
-        """Impede suspender, apagar a tela ou bloquear a sessão enquanto o
-        cliente está conectado (Windows e macOS; no-op nos demais).
+        """Mantém a máquina acordada SÓ quando ociosa (Windows e macOS).
 
-        ``keep_awake`` reafirma o estado a cada ciclo (necessário no Windows) e,
-        no macOS, garante o token de atividade; ``nudge`` zera o cronômetro de
-        ociosidade no Windows (no-op fora)."""
+        Verifica a ociosidade a cada ``keep_awake_interval``; quando o usuário
+        fica ``keep_awake_idle_threshold`` segundos SEM input, segura o sistema
+        acordado — no Windows reafirma o estado e dá um toque em F15 (que zera o
+        cronômetro de bloqueio/suspensão), no macOS retém o token de atividade.
+        Enquanto o usuário está ativo (ou volta a usar), libera para o
+        comportamento normal de energia. Sem detecção de ociosidade (Linux/falha)
+        mantém acordado, como antes."""
         from zephyrlink import keepawake
 
+        net = self._config.network
+        holding = False
         try:
             while True:
-                keepawake.keep_awake()
-                keepawake.nudge()
-                await asyncio.sleep(self._config.network.keep_awake_interval)
+                if keepawake.should_keep_awake(keepawake.idle_seconds(), net.keep_awake_idle_threshold):
+                    keepawake.keep_awake()
+                    keepawake.nudge()
+                    holding = True
+                elif holding:
+                    # Usuário voltou a usar: devolve o controle de energia ao SO.
+                    keepawake.allow_sleep()
+                    holding = False
+                await asyncio.sleep(net.keep_awake_interval)
         finally:
             keepawake.allow_sleep()
 
