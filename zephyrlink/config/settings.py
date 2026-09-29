@@ -51,7 +51,7 @@ class NetworkConfig:
     discovery_timeout: float = 5.0
     keep_awake: bool = True
     keep_awake_interval: float = 30.0        # cadência (s) de verificação da ociosidade
-    keep_awake_idle_threshold: float = 180.0  # só mantém acordado após N s SEM uso (3 min)
+    keep_awake_idle_threshold: float = 60.0   # só mantém acordado após N s SEM uso (1 min)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,7 +317,7 @@ def build_config(raw: dict[str, Any]) -> AppConfig:
             discovery_timeout=float(net.get("discovery_timeout", 5.0)),
             keep_awake=bool(net.get("keep_awake", True)),
             keep_awake_interval=float(net.get("keep_awake_interval", 30.0)),
-            keep_awake_idle_threshold=float(net.get("keep_awake_idle_threshold", 180.0)),
+            keep_awake_idle_threshold=float(net.get("keep_awake_idle_threshold", 60.0)),
         ),
         security=SecurityConfig(
             shared_key=str(sec.get("shared_key", "change-me")),

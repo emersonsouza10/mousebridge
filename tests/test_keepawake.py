@@ -52,8 +52,8 @@ class EffectiveThresholdTest(unittest.TestCase):
 
 
 class KeepAwakeConfigTest(unittest.TestCase):
-    def test_default_threshold_is_three_minutes(self) -> None:
-        self.assertEqual(build_config({}).network.keep_awake_idle_threshold, 180.0)
+    def test_default_threshold_is_one_minute(self) -> None:
+        self.assertEqual(build_config({}).network.keep_awake_idle_threshold, 60.0)
 
     def test_custom_threshold(self) -> None:
         net = build_config({"network": {"keep_awake_idle_threshold": 120}}).network
