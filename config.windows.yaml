@@ -14,12 +14,9 @@ network:
   # manual_host: 192.168.10.227
 
   # --- keep-alive (#Windows): impede a tela de bloquear/suspender ---
-  keep_awake: true               # liga o keep-alive (só age quando a máquina está ociosa)
-  keep_awake_idle_threshold: 60  # segundos SEM uso antes de segurar acordado (1 min).
-                                 # É limitado automaticamente para agir ANTES do bloqueio
-                                 # do Windows (proteção de tela / InactivityTimeoutSecs).
-                                 # Se a tela bloqueia em <= 1 min, baixe este valor (ex.: 30).
-  keep_awake_interval: 30        # cadência (s) de verificação da ociosidade
+  keep_awake: true         # liga o keep-alive enquanto conectado
+  keep_awake_interval: 30  # dá um toque (F15) a cada N s p/ não bloquear/suspender.
+                           # Deve ser MENOR que o tempo de bloqueio do Windows.
 
 security:
   shared_key: change-me          # TROQUE pela MESMA chave das outras máquinas
