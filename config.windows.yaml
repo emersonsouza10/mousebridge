@@ -1,0 +1,32 @@
+# #Windows
+# =====================================================================
+# Config de CLIENTE (alvo) para máquinas WINDOWS.
+# Este arquivo É versionado (vai pro git), então serve de modelo pronto.
+# Na máquina Windows, copie para config.yaml e ajuste a shared_key:
+#     copy config.windows.yaml config.yaml
+# (o config.yaml em si é ignorado pelo git — cada máquina tem o seu.)
+# =====================================================================
+
+role: client
+
+network:
+  # IP do operador (servidor). Comente para usar a descoberta automática (UDP).
+  # manual_host: 192.168.10.227
+
+  # --- keep-alive (#Windows): impede a tela de bloquear/suspender ---
+  keep_awake: true               # liga o keep-alive (só age quando a máquina está ociosa)
+  keep_awake_idle_threshold: 60  # segundos SEM uso antes de segurar acordado (1 min).
+                                 # É limitado automaticamente para agir ANTES do bloqueio
+                                 # do Windows (proteção de tela / InactivityTimeoutSecs).
+                                 # Se a tela bloqueia em <= 1 min, baixe este valor (ex.: 30).
+  keep_awake_interval: 30        # cadência (s) de verificação da ociosidade
+
+security:
+  shared_key: change-me          # TROQUE pela MESMA chave das outras máquinas
+
+# Acesso remoto (tela + controle) — já vem ligado por padrão; explícito aqui
+# só para referência no #Windows.
+remote_desktop:
+  enabled: true                  # aceita ser visto/controlado
+  allow_insecure: true           # LAN sem TLS (frames NÃO criptografados)
+  require_consent: false         # sem diálogo de permissão no alvo
