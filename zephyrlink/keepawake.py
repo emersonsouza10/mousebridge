@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -171,3 +172,90 @@ def should_keep_awake(idle: float | None, idle_threshold: float) -> bool:
     Mantém acordado só quando ociosa há ``idle_threshold`` segundos ou mais. Sem
     medição de ociosidade (``idle is None``), mantém acordado (seguro)."""
     return idle is None or idle >= idle_threshold
+
+
+# --- Detecção do tempo de bloqueio/proteção de tela do SO -------------------
+_lock_cache: tuple[float, float | None] | None = None  # (instante, valor) p/ macOS
+_LOCK_CACHE_TTL = 300.0
+
+
+def _windows_lock_timeout() -> float | None:
+    import ctypes
+
+    candidates: list[float] = []
+    SPI_GETSCREENSAVETIMEOUT = 0x000E
+    SPI_GETSCREENSAVEACTIVE = 0x0010
+    try:
+        spi = ctypes.windll.user32.SystemParametersInfoW
+        active = ctypes.c_int(0)
+        if spi(SPI_GETSCREENSAVEACTIVE, 0, ctypes.byref(active), 0) and active.value:
+            secs = ctypes.c_uint(0)
+            if spi(SPI_GETSCREENSAVETIMEOUT, 0, ctypes.byref(secs), 0) and secs.value > 0:
+                candidates.append(float(secs.value))
+    except (OSError, AttributeError):
+        pass
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
+        ) as key:
+            val, _ = winreg.QueryValueEx(key, "InactivityTimeoutSecs")
+            if int(val) > 0:
+                candidates.append(float(val))
+    except OSError:
+        pass  # política não definida
+    return min(candidates) if candidates else None
+
+
+def _macos_lock_timeout() -> float | None:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["defaults", "-currentHost", "read", "com.apple.screensaver", "idleTime"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        secs = int(out.stdout.strip())
+    except ValueError:
+        return None
+    return float(secs) if secs > 0 else None
+
+
+def lock_timeout_seconds() -> float | None:
+    """Segundos de inatividade até o SO proteger/bloquear a tela; ``None`` se não
+    houver bloqueio configurado ou não der para descobrir.
+
+    Windows: menor entre a proteção de tela (SystemParametersInfo) e o limite de
+    inatividade por política (``InactivityTimeoutSecs``). macOS: ``idleTime`` da
+    proteção de tela (lido via ``defaults``, com cache de 5 min por ser
+    subprocess). Usado para nudgear ANTES do bloqueio."""
+    global _lock_cache
+    if sys.platform == "win32":
+        return _windows_lock_timeout()
+    if sys.platform == "darwin":
+        now = time.monotonic()
+        if _lock_cache is not None and now - _lock_cache[0] < _LOCK_CACHE_TTL:
+            return _lock_cache[1]
+        value = _macos_lock_timeout()
+        _lock_cache = (now, value)
+        return value
+    return None
+
+
+def effective_idle_threshold(configured: float, lock_timeout: float | None, buffer: float = 20.0) -> float:
+    """Limiar de ociosidade a usar de fato.
+
+    Respeita o ``configured`` (ex.: 3 min), MAS nunca deixa passar do bloqueio do
+    SO: se há um ``lock_timeout`` conhecido, o limiar é limitado a
+    ``lock_timeout - buffer`` (mínimo 5 s), garantindo o nudge antes do bloqueio."""
+    if lock_timeout is None or lock_timeout <= 0:
+        return configured
+    safe = max(5.0, lock_timeout - buffer)
+    return min(configured, safe)

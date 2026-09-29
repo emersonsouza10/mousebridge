@@ -95,23 +95,35 @@ class ZephyrLinkClient:
             "Cliente iniciado (tela=%dx%d, %d monitor(es))",
             self._screen.width, self._screen.height, len(self._layout.monitors),
         )
-        # Manter a máquina acordada é feito por sessão em _keep_awake_loop
-        # (configurável via network.keep_awake), enquanto conectado.
-        while not self._stopping.is_set():
-            # Sem conexão ainda: reporta "procurando" para a GUI/barra.
-            self._emit_status()
-            endpoint = await self._resolve_server()
-            if endpoint is None:
+        # Mantém a máquina acordada durante TODA a execução do cliente (não só
+        # quando conectado), para o alvo continuar disponível/desbloqueado
+        # quando o operador for conectar. Configurável via network.keep_awake.
+        keepawake_task = (
+            asyncio.create_task(self._keep_awake_loop(), name="keepawake")
+            if self._config.network.keep_awake
+            else None
+        )
+        try:
+            while not self._stopping.is_set():
+                # Sem conexão ainda: reporta "procurando" para a GUI/barra.
+                self._emit_status()
+                endpoint = await self._resolve_server()
+                if endpoint is None:
+                    await self._wait_retry()
+                    continue
+                host, port = endpoint
+                try:
+                    await self._session(host, port)
+                except (ConnectionError, asyncio.IncompleteReadError, OSError, asyncio.TimeoutError) as exc:
+                    logger.info("Sessão encerrada (%s); reconectando...", exc or type(exc).__name__)
+                finally:
+                    await self._teardown_session()
                 await self._wait_retry()
-                continue
-            host, port = endpoint
-            try:
-                await self._session(host, port)
-            except (ConnectionError, asyncio.IncompleteReadError, OSError, asyncio.TimeoutError) as exc:
-                logger.info("Sessão encerrada (%s); reconectando...", exc or type(exc).__name__)
-            finally:
-                await self._teardown_session()
-            await self._wait_retry()
+        finally:
+            if keepawake_task is not None:
+                keepawake_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await keepawake_task
         logger.info("Cliente finalizado")
 
     def stop(self) -> None:
@@ -171,15 +183,12 @@ class ZephyrLinkClient:
         self._stream = stream
         self._emit_status()
         self._clipboard.start(self._send_clipboard, self._send_files)
+        # keep-awake roda no nível do run() (toda a vida do cliente), não por sessão.
         watchdog = asyncio.create_task(self._watchdog_loop(stream), name="watchdog")
-        tasks = [watchdog]
-        if self._config.network.keep_awake:
-            tasks.append(asyncio.create_task(self._keep_awake_loop(), name="keepawake"))
         try:
             await self._receive_loop(stream)
         finally:
-            for task in tasks:
-                task.cancel()
+            watchdog.cancel()
 
     async def _teardown_session(self) -> None:
         await self._stop_rd()
@@ -425,22 +434,40 @@ class ZephyrLinkClient:
                 return
 
     async def _keep_awake_loop(self) -> None:
-        """Mantém a máquina acordada SÓ quando ociosa (Windows e macOS).
+        """Mantém a máquina acordada SÓ quando ociosa, e ANTES de o SO bloquear.
 
-        Verifica a ociosidade a cada ``keep_awake_interval``; quando o usuário
-        fica ``keep_awake_idle_threshold`` segundos SEM input, segura o sistema
-        acordado — no Windows reafirma o estado e dá um toque em F15 (que zera o
-        cronômetro de bloqueio/suspensão), no macOS retém o token de atividade.
-        Enquanto o usuário está ativo (ou volta a usar), libera para o
-        comportamento normal de energia. Sem detecção de ociosidade (Linux/falha)
-        mantém acordado, como antes."""
+        Verifica a ociosidade periodicamente; quando o usuário fica ocioso o
+        bastante, segura o sistema acordado — no Windows reafirma o estado e dá
+        um toque em F15 (que zera o cronômetro de bloqueio/suspensão), no macOS
+        retém o token de atividade; ao voltar a usar, libera o controle de
+        energia ao SO.
+
+        O limiar de ociosidade respeita ``keep_awake_idle_threshold``, mas é
+        limitado para agir SEMPRE antes do bloqueio do SO: se o Windows/macOS
+        bloqueia em T s, o nudge é dado por volta de T menos uma folga — assim a
+        tela não chega a bloquear. A verificação também acelera para caber nessa
+        janela. Sem detecção de ociosidade (Linux/falha) mantém acordado."""
         from zephyrlink import keepawake
 
         net = self._config.network
+        buffer = 20.0
         holding = False
+        last_effective: float | None = None
         try:
             while True:
-                if keepawake.should_keep_awake(keepawake.idle_seconds(), net.keep_awake_idle_threshold):
+                lock = keepawake.lock_timeout_seconds()
+                effective = keepawake.effective_idle_threshold(
+                    net.keep_awake_idle_threshold, lock, buffer
+                )
+                if effective != last_effective:
+                    if lock is not None and effective < net.keep_awake_idle_threshold:
+                        logger.info(
+                            "Keep-awake: bloqueio do SO em %.0fs; nudge a cada %.0fs de "
+                            "ociosidade (limiar pedido: %.0fs)",
+                            lock, effective, net.keep_awake_idle_threshold,
+                        )
+                    last_effective = effective
+                if keepawake.should_keep_awake(keepawake.idle_seconds(), effective):
                     keepawake.keep_awake()
                     keepawake.nudge()
                     holding = True
@@ -448,7 +475,8 @@ class ZephyrLinkClient:
                     # Usuário voltou a usar: devolve o controle de energia ao SO.
                     keepawake.allow_sleep()
                     holding = False
-                await asyncio.sleep(net.keep_awake_interval)
+                # Verifica rápido o suficiente para nudgear dentro da janela de folga.
+                await asyncio.sleep(min(net.keep_awake_interval, buffer / 2))
         finally:
             keepawake.allow_sleep()
 

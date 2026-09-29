@@ -1,7 +1,12 @@
 import unittest
 
 from zephyrlink.config.settings import ConfigError, build_config
-from zephyrlink.keepawake import idle_seconds, should_keep_awake
+from zephyrlink.keepawake import (
+    effective_idle_threshold,
+    idle_seconds,
+    lock_timeout_seconds,
+    should_keep_awake,
+)
 
 
 class ShouldKeepAwakeTest(unittest.TestCase):
@@ -22,6 +27,28 @@ class IdleSecondsTest(unittest.TestCase):
     def test_returns_float_or_none(self) -> None:
         val = idle_seconds()
         self.assertTrue(val is None or (isinstance(val, float) and val >= 0.0))
+
+
+class LockTimeoutTest(unittest.TestCase):
+    def test_returns_positive_float_or_none(self) -> None:
+        val = lock_timeout_seconds()
+        self.assertTrue(val is None or (isinstance(val, float) and val > 0.0))
+
+
+class EffectiveThresholdTest(unittest.TestCase):
+    def test_no_lock_uses_configured(self) -> None:
+        self.assertEqual(effective_idle_threshold(180.0, None), 180.0)
+        self.assertEqual(effective_idle_threshold(180.0, 0.0), 180.0)
+
+    def test_caps_below_lock(self) -> None:
+        # Bloqueio em 60s, folga 20 => age aos 40s (antes do bloqueio).
+        self.assertEqual(effective_idle_threshold(180.0, 60.0, 20.0), 40.0)
+
+    def test_respects_configured_when_lock_is_far(self) -> None:
+        self.assertEqual(effective_idle_threshold(180.0, 600.0, 20.0), 180.0)
+
+    def test_floor_when_lock_very_short(self) -> None:
+        self.assertEqual(effective_idle_threshold(180.0, 10.0, 20.0), 5.0)
 
 
 class KeepAwakeConfigTest(unittest.TestCase):
