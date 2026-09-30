@@ -126,6 +126,10 @@ class ZephyrLinkGUI:
         self._fit_to_screen()
         # App de barra de menus no macOS: ícone no topo, sem ícone no Dock.
         self._menubar = install_menubar(self)
+        # macOS: como app acessório (sem Dock), a janela abre EM BRANCO até o app
+        # ser ativado. Ativa no início para desenhar os controles automaticamente
+        # (mesmo efeito de ⚡ → "Mostrar janela", que o usuário faria na mão).
+        self._root.after(250, self._macos_activate_on_start)
         # Com o Tk/NSApplication já ativo, pede a Acessibilidade ao macOS para o
         # sistema registrar o app correto (senão a captura de mouse/teclado não
         # funciona: "This process is not trusted!").
@@ -503,6 +507,15 @@ class ZephyrLinkGUI:
             AppKit.NSApp.activateIgnoringOtherApps_(True)
         except Exception:  # noqa: BLE001
             pass
+
+    def _macos_activate_on_start(self) -> None:
+        """Ativa o app no início para a janela do macOS não abrir em branco.
+
+        Como app acessório (sem Dock), o conteúdo só desenha quando o app é
+        ativado; reusa o mesmo caminho do menu ⚡ → "Mostrar janela"."""
+        if sys.platform != "darwin":
+            return
+        self._menubar_show_window()
 
     def _menubar_quit(self) -> None:
         self._quit()
