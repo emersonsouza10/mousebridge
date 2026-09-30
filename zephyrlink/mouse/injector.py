@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 _MULTI_CLICK_SECONDS = 0.5
 _MULTI_CLICK_PIXELS = 4
 
+# No macOS a rolagem injetada (pynput, unidade de LINHA) rola bem menos por
+# "clique" que a rolagem nativa, ficando lenta. Multiplica para aproximar o
+# comportamento nativo. Aumente/diminua se ficar rápido/lento demais.
+_MAC_SCROLL_MULTIPLIER = 3
+
 
 class MouseInjector:
     def __init__(self, layout: MonitorLayout) -> None:
@@ -96,4 +101,7 @@ class MouseInjector:
             self._controller._click = None
 
     def scroll(self, dx: int, dy: int) -> None:
+        if sys.platform == "darwin":
+            dx *= _MAC_SCROLL_MULTIPLIER
+            dy *= _MAC_SCROLL_MULTIPLIER
         self._controller.scroll(dx, dy)
